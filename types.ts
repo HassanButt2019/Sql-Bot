@@ -1,4 +1,24 @@
 export type LLMModel = 'gemini-3-pro' | 'gemini-3-flash' | 'claude-3-5' | 'gpt-4o';
+export type DbDialect = 'postgresql' | 'mysql' | 'sqlserver' | 'sqlite';
+
+export interface TableInfo {
+  name: string;
+  schema: string;
+  selected: boolean;
+}
+
+export interface DbConnection {
+  id: string;
+  name: string;
+  host: string;
+  port: string;
+  username: string;
+  database: string;
+  dialect: DbDialect;
+  tables: TableInfo[];
+  isActive: boolean;
+  status: 'connected' | 'error' | 'disconnected';
+}
 
 export interface Message {
   id: string;
@@ -14,7 +34,8 @@ export interface Message {
     yAxis: string;
     yAxisSecondary?: string; // For composed charts
     title: string;
-    colorScheme?: 'default' | 'performance' | 'categorical' | 'warm' | 'cool';
+    colorScheme?: 'default' | 'performance' | 'categorical' | 'warm' | 'cool' | 'trust' | 'growth' | 'alert';
+    customColors?: string[];
     showLabels?: boolean;
   };
 }

@@ -1,36 +1,23 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { Message } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
-const DB_SCHEMA = `
-Table: orders
-Columns: order_id (int), customer_id (int), order_date (date), total_amount (decimal), status (string)
-
-Table: order_items
-Columns: item_id (int), order_id (int), product_id (int), quantity (int), unit_price (decimal)
-
-Table: products
-Columns: product_id (int), product_name (string), category (string), price (decimal), stock_level (int)
-
-Table: customers
-Columns: customer_id (int), first_name (string), last_name (string), email (string), city (string), country (string)
-`;
-
 export async function generateSqlQueryStream(
   prompt: string, 
+  schemaContext: string,
   model: string = 'gemini-3-pro-preview',
   onChunk: (text: string) => void
 ): Promise<Partial<Message>> {
   const responseStream = await ai.models.generateContentStream({
     model: model,
-    contents: prompt,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       systemInstruction: `You are a world-class Data Analyst and Visualization Expert.
     Given the database schema provided below, translate the user's natural language question into a valid SQL query and a high-impact JSON visualization config.
     
-    SCHEMA:
-    ${DB_SCHEMA}
+    SCHEMA CONTEXT:
+    ${schemaContext}
 
     VISUALIZATION RULES:
     1. Select the most effective chart type:
@@ -38,49 +25,28 @@ export async function generateSqlQueryStream(
        - 'line': For continuous time-series data.
        - 'area': For visualizing volume or totals over time.
        - 'pie': For part-to-whole relationships (limit to 6 segments).
-       - 'radar': For comparing 3+ metrics across categories (e.g. comparing 5 products across 4 metrics).
-       - 'scatter': For correlation between two numeric variables (X and Y must both be numbers).
-       - 'composed': For comparing a value (bar) against a trend or target (line). Use 'yAxisSecondary' for the line metric.
+       - 'radar': For comparing 3+ metrics across categories.
+       - 'scatter': For correlation between two numeric variables.
+       - 'composed': For comparing a value (bar) against a trend or target (line).
 
-    2. Choose a meaningful 'colorScheme':
-       - 'performance': Use for KPIs (Revenue, Sales, Growth) where green/red semantics matter.
-       - 'categorical': Use for distinct categories (Product Names, Regions).
-       - 'warm': Use for urgent or heat-related data.
-       - 'cool': Use for steady or technical data.
-       - 'default': Standard clean aesthetic.
+    2. Choose a meaningful 'colorScheme' based on the context of the data:
+       - 'trust': Professional blues/grays (Corporate reporting, security, stable metrics).
+       - 'growth': Greens (Revenue increase, sales growth, positive trends).
+       - 'performance': Green/Yellow/Red (KPI tracking, performance metrics).
+       - 'categorical': Diverse high-contrast colors (Regional breakdown, product types).
+       - 'warm': Reds/Oranges (Urgent alerts, heatmaps, high activity).
+       - 'cool': Cyans/Indigos (Technical data, baseline metrics).
+       - 'alert': High-saturation Reds (Risk detection, stock shortages, critical errors).
+       - 'default': Clean standard aesthetic.
 
     Your response MUST be in valid JSON format with these keys:
-    - sql: The generated SQL query.
+    - sql: The generated SQL query string.
     - explanation: A concise textual explanation of the data findings.
     - chartConfig: { type, xAxis, yAxis, yAxisSecondary?, title, colorScheme }
-    - chartData: An array of 5-10 objects representing the mock result set.
+    - chartData: An array of objects representing the result set (keys match xAxis/yAxis).
 
     If the question cannot be answered by the schema, explain why.`,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          sql: { type: Type.STRING },
-          explanation: { type: Type.STRING },
-          chartConfig: {
-            type: Type.OBJECT,
-            properties: {
-              type: { type: Type.STRING },
-              xAxis: { type: Type.STRING },
-              yAxis: { type: Type.STRING },
-              yAxisSecondary: { type: Type.STRING },
-              title: { type: Type.STRING },
-              colorScheme: { type: Type.STRING }
-            },
-            required: ['type', 'xAxis', 'yAxis', 'title']
-          },
-          chartData: {
-            type: Type.ARRAY,
-            items: { type: Type.OBJECT }
-          }
-        },
-        required: ['sql', 'explanation', 'chartConfig', 'chartData']
-      }
+      responseMimeType: "application/json"
     }
   });
 
@@ -98,10 +64,10 @@ export async function generateSqlQueryStream(
       explanation: data.explanation,
       chartConfig: data.chartConfig,
       chartData: data.chartData,
-      content: data.explanation
+      content: data.explanation || "Analysis complete."
     };
   } catch (error) {
     console.error("Failed to parse Gemini response", error);
-    return { content: "I encountered an error processing that request." };
+    return { content: "I encountered an error processing the structured data response." };
   }
 }

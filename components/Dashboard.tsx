@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { DashboardItem } from '../types';
 import SqlChart from './SqlChart';
@@ -20,13 +19,13 @@ interface DashboardProps {
   title?: string;
   onRemove: (id: string) => void;
   onResize: (id: string) => void;
+  onUpdateItemScheme?: (id: string, scheme: string) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboard", onRemove, onResize }) => {
+const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboard", onRemove, onResize, onUpdateItemScheme }) => {
   const [showShareToast, setShowShareToast] = useState(false);
 
   const handleExportPDF = () => {
-    // Small delay to ensure any dynamic charts are ready for capture
     setTimeout(() => {
       window.print();
     }, 200);
@@ -35,8 +34,6 @@ const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboa
   const handleExportCSV = () => {
     if (items.length === 0) return;
 
-    // We'll export the first item's data as a sample or merge all? 
-    // Let's create a bundle of all charts in one CSV
     let csvContent = "data:text/csv;charset=utf-8,";
     
     items.forEach(item => {
@@ -175,6 +172,8 @@ const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboa
                     yAxis={item.chartConfig.yAxis}
                     title={item.title}
                     height={item.height}
+                    colorScheme={item.chartConfig.colorScheme}
+                    onUpdateScheme={(scheme) => onUpdateItemScheme?.(item.id, scheme)}
                   />
                   
                   <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">

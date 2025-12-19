@@ -1,7 +1,7 @@
 
 import { Message } from "../types";
 
-const OPENAI_API_KEY =""
+const OPENAI_API_KEY = "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";
 
 const DB_SCHEMA = `
 Table: orders (order_id, customer_id, order_date, total_amount, status)
