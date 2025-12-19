@@ -298,16 +298,10 @@ const App: React.FC = () => {
     setDashboards(prev => prev.map(d => d.id === currentDashboardId ? { ...d, items: d.items.filter(item => item.id !== itemId), updatedAt: Date.now() } : d));
   };
 
-  const toggleResize = (itemId: string) => {
+  const updateDashboardItemSize = (itemId: string, size: 4 | 6 | 12) => {
     setDashboards(prev => prev.map(d => d.id === currentDashboardId ? { 
       ...d, 
-      items: d.items.map(item => {
-        if (item.id === itemId) {
-          const nextSpan: 4 | 6 | 12 = item.colSpan === 6 ? 12 : item.colSpan === 12 ? 4 : 6;
-          return { ...item, colSpan: nextSpan };
-        }
-        return item;
-      }),
+      items: d.items.map(item => item.id === itemId ? { ...item, colSpan: size } : item),
       updatedAt: Date.now()
     } : d));
   };
@@ -448,7 +442,13 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="h-full overflow-y-auto dashboard-scroll-container">
-              <Dashboard items={currentDashboard?.items || []} title={currentDashboard?.title} onRemove={removeFromDashboard} onResize={toggleResize} onUpdateItemScheme={updateDashboardItemColorScheme} />
+              <Dashboard 
+                items={currentDashboard?.items || []} 
+                title={currentDashboard?.title} 
+                onRemove={removeFromDashboard} 
+                onUpdateSize={updateDashboardItemSize} 
+                onUpdateItemScheme={updateDashboardItemColorScheme} 
+              />
             </div>
           )}
         </main>

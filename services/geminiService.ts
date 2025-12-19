@@ -45,20 +45,27 @@ export async function generateSqlQueryStream(
     - chartConfig: { type, xAxis, yAxis, yAxisSecondary?, title, colorScheme }
     - chartData: An array of objects representing the result set (keys match xAxis/yAxis).
 
-    If the question cannot be answered by the schema, explain why.`,
+    IMPORTANT: Do not wrap the JSON in markdown blocks. Return the raw JSON string.`,
       responseMimeType: "application/json"
     }
   });
 
   let fullText = "";
-  for await (const chunk of responseStream) {
-    const text = chunk.text;
-    fullText += text;
-    onChunk("Synthesizing insights..."); 
+  try {
+    for await (const chunk of responseStream) {
+      const text = chunk.text;
+      fullText += text;
+      onChunk("Synthesizing insights..."); 
+    }
+  } catch (err) {
+    console.error("Streaming error:", err);
+    return { content: "I encountered a streaming error while communicating with the AI." };
   }
 
   try {
-    const data = JSON.parse(fullText || '{}');
+    // Clean potential markdown wrapping if the model ignored instructions
+    const jsonStr = fullText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+    const data = JSON.parse(jsonStr || '{}');
     return {
       sql: data.sql,
       explanation: data.explanation,
@@ -67,7 +74,7 @@ export async function generateSqlQueryStream(
       content: data.explanation || "Analysis complete."
     };
   } catch (error) {
-    console.error("Failed to parse Gemini response", error);
+    console.error("Failed to parse Gemini response", error, fullText);
     return { content: "I encountered an error processing the structured data response." };
   }
 }

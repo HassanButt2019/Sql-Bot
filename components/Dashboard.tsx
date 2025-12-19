@@ -3,26 +3,26 @@ import { DashboardItem } from '../types';
 import SqlChart from './SqlChart';
 import { 
   Trash2Icon, 
-  Maximize2Icon, 
   LayoutGridIcon, 
   PlusCircleIcon, 
-  ClockIcon, 
-  DownloadIcon, 
   Share2Icon,
   CheckIcon,
   FileSpreadsheetIcon,
-  PrinterIcon
+  PrinterIcon,
+  ColumnsIcon,
+  MaximizeIcon,
+  MinimizeIcon
 } from 'lucide-react';
 
 interface DashboardProps {
   items: DashboardItem[];
   title?: string;
   onRemove: (id: string) => void;
-  onResize: (id: string) => void;
+  onUpdateSize: (id: string, size: 4 | 6 | 12) => void;
   onUpdateItemScheme?: (id: string, scheme: string) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboard", onRemove, onResize, onUpdateItemScheme }) => {
+const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboard", onRemove, onUpdateSize, onUpdateItemScheme }) => {
   const [showShareToast, setShowShareToast] = useState(false);
 
   const handleExportPDF = () => {
@@ -147,21 +147,38 @@ const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboa
                 key={item.id} 
                 className={`group relative transition-all duration-300 ease-in-out min-w-0 ${spanClass}`}
               >
-                <div className="absolute top-4 right-4 z-20 flex gap-2 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 no-print">
-                  <button
-                    onClick={() => onResize(item.id)}
-                    title="Change Widget Size"
-                    className="bg-white/90 backdrop-blur text-slate-700 p-2.5 rounded-xl hover:bg-white transition-all shadow-xl border border-slate-100 hover:scale-110"
-                  >
-                    <Maximize2Icon className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => onRemove(item.id)}
-                    title="Remove from Dashboard"
-                    className="bg-red-50/90 backdrop-blur text-red-600 p-2.5 rounded-xl hover:bg-red-100 transition-all shadow-xl border border-red-100 hover:scale-110"
-                  >
-                    <Trash2Icon className="w-4 h-4" />
-                  </button>
+                <div className="absolute top-4 right-4 z-20 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 no-print">
+                  <div className="flex gap-2 p-1.5 bg-white/95 backdrop-blur shadow-2xl rounded-2xl border border-slate-200">
+                    <button
+                      onClick={() => onUpdateSize(item.id, 4)}
+                      title="1/3 Width"
+                      className={`p-2 rounded-xl transition-all ${item.colSpan === 4 ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-400'}`}
+                    >
+                      <MinimizeIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => onUpdateSize(item.id, 6)}
+                      title="1/2 Width"
+                      className={`p-2 rounded-xl transition-all ${item.colSpan === 6 ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-400'}`}
+                    >
+                      <ColumnsIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => onUpdateSize(item.id, 12)}
+                      title="Full Width"
+                      className={`p-2 rounded-xl transition-all ${item.colSpan === 12 ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-400'}`}
+                    >
+                      <MaximizeIcon className="w-4 h-4" />
+                    </button>
+                    <div className="w-px h-4 bg-slate-200 self-center mx-1" />
+                    <button
+                      onClick={() => onRemove(item.id)}
+                      title="Remove"
+                      className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                    >
+                      <Trash2Icon className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden hover:shadow-2xl hover:shadow-blue-500/5 transition-all">
