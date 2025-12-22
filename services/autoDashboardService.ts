@@ -119,7 +119,7 @@ export async function generateAutoDashboard(
   schemaContext: string,
   apiKey: string,
   dbConnection: DbConnection | null,
-  widgetCount: number = 4,
+  widgetCount: number = 15,
   onProgress?: (message: string) => void
 ): Promise<AutoDashboardResult> {
   

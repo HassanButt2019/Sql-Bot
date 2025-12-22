@@ -580,7 +580,7 @@ function calculateNextRun(frequency, time) {
 // AUTO-DASHBOARD GENERATION ENDPOINT
 // Generates multiple dashboard widgets from a single prompt
 app.post('/api/generate-dashboard', async (req, res) => {
-  const { prompt, schemaContext, apiKey, dbConnection, widgetCount = 4 } = req.body;
+  const { prompt, schemaContext, apiKey, dbConnection, widgetCount = 8 } = req.body;
   
   // Use provided API key only if it's a non-empty string, otherwise fall back to env variable
   const openaiApiKey = (apiKey && apiKey.trim()) ? apiKey.trim() : process.env.OPENAI_API_KEY;
@@ -596,18 +596,31 @@ app.post('/api/generate-dashboard', async (req, res) => {
   }
 
   const systemPrompt = `You are a world-class Data Analyst and Dashboard Designer.
-Given the database schema below, create ${widgetCount} diverse dashboard widgets based on the user's request.
 
 DATABASE SCHEMA:
 ${schemaContext}
 
-TASK: Generate ${widgetCount} different analytics widgets that form a cohesive dashboard about: "${prompt}"
+TASK: Generate ${widgetCount} analytics widgets for: "${prompt}"
 
-Each widget should:
-1. Answer a different aspect of the user's request
-2. Use an appropriate chart type for the data
-3. Have a clear, descriptive title
-4. Use valid SQL for the given schema
+STRICT HIERARCHY & FLOW:
+1. KPI/STATISTICS ROW: The first widgets in the response MUST be a row of KPI cards (totals, averages, counts, min/max) relevant to the prompt.
+2. ANALYTICAL DEPTH: Follow KPIs with Trends (Time-series), then Distribution/Comparison charts, and finally Advanced Predictions or Anomaly insights.
+
+CORE OPERATIONAL RULES:
+- NO HALLUCINATION: Only use tables and columns explicitly defined in the schema above. Do NOT invent data structures.
+- DATA EXISTENCE: For each widget, ensure the SQL logic will return at least 1 row of data. If the data is missing for a specific join, skip the widget or select a simpler aggregate.
+- NO PLACEHOLDERS: Do NOT generate widgets with empty, random, or placeholder data.
+- DIVERSITY: Use a variety of chart types; do not repeat the same chart type for all widgets.
+- DENSITY: Limit SQL results to 10-20 rows per widget to ensure readability and high-performance rendering.
+- FORMATTING: Return ONLY valid JSON. Do not wrap JSON in markdown (no \`\`\`json blocks).
+
+SELF-HEALING & ACCURACY GUARDRAILS:
+- NULL PREVENTION: Use 'COALESCE(column, 0)' for numeric aggregations and 'WHERE column IS NOT NULL' to prevent 'NaN' or empty states.
+- SAFE DIVISION: Use 'NULLIF(denominator, 0)' in all mathematical divisions to prevent division-by-zero errors.
+- JOIN INTEGRITY: Explicitly identify the relationship path (e.g., join 'products' to 'internal_sales_data' on 'product_id').
+- AGGREGATION: For time-series, use proper date grouping (e.g., DATE_TRUNC) to ensure the x-axis is a continuous timeline.
+- TIME SERIES: Always use the most granular date/time column available for trends.
+
 
 CHART TYPE GUIDELINES:
 - 'bar': Categorical comparisons, rankings, top-N lists
@@ -617,6 +630,9 @@ CHART TYPE GUIDELINES:
 - 'radar': Multi-dimensional comparisons
 - 'scatter': Correlations between two numeric variables
 - 'composed': Combining bar + line for different metrics
+- 'gauge': For single-value performance metrics
+- 'heatmap': For matrix-style, density, or activity data
+- 'geo': For location-based metrics (must use valid location columns)
 
 COLOR SCHEME OPTIONS:
 - 'trust': Professional blues/grays
@@ -628,6 +644,17 @@ COLOR SCHEME OPTIONS:
 - 'alert': Warning reds
 - 'default': Clean balanced palette
 
+ADVANCED DASHBOARD GUIDELINES:
+- Group related widgets visually and logically (e.g., KPIs/statistics row, trends section, distribution section).
+- Use drill-down or filterable widgets if the schema supports it (e.g., by date, region, product).
+- For time-series, always use the most granular available date/time column.
+- For geo widgets, only use columns with valid location data (city, country, region, coordinates).
+- For heatmaps, ensure both axes have meaningful categories and enough data points.
+- For composed charts, combine metrics that are complementary (e.g., revenue and order count).
+- Always optimize for readability and business insight: avoid clutter, use clear labels, and prioritize actionable metrics.
+- If the schema includes user, product, or transaction tables, prioritize widgets that show trends, distributions, and top performers.
+- If possible, include at least one widget that highlights anomalies, outliers, or recent changes.
+
 RESPONSE FORMAT (JSON):
 {
   "dashboardTitle": "Descriptive Dashboard Title",
@@ -635,29 +662,20 @@ RESPONSE FORMAT (JSON):
   "widgets": [
     {
       "title": "Widget Title",
-      "sql": "SELECT column1, COUNT(*) as count FROM table GROUP BY column1 LIMIT 10",
+      "sql": "SELECT ...",
       "explanation": "What this widget shows",
       "chartConfig": {
-        "type": "bar",
-        "xAxis": "column1",
-        "yAxis": "count",
-        "title": "Widget Title",
-        "colorScheme": "categorical"
+        "type": "bar|line|pie|area|radar|scatter|composed|gauge|heatmap|geo",
+        "xAxis": "column_name",
+        "yAxis": "column_name",
+        "title": "Chart Title",
+        "colorScheme": "default|trust|growth|performance|categorical|warm|cool|alert"
       }
     }
   ]
 }
-
-RULES:
-1. Generate EXACTLY ${widgetCount} widgets
-2. Each SQL must be valid and executable
-3. Include diverse chart types (don't repeat the same type for all)
-4. Make widgets complementary - together they tell a complete story
-5. Use aggregations (COUNT, SUM, AVG) for chart-friendly data
-6. Limit results to 10-20 rows per widget
-7. Consider including: totals, trends, rankings, distributions, comparisons
-
-Do not wrap JSON in markdown. Return only valid JSON.`;
+Do not wrap JSON in markdown. Return only valid JSON.
+`;
 
   try {
     console.log('🎨 Generating auto-dashboard for:', prompt);
