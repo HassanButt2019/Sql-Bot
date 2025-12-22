@@ -2,15 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Message, Conversation, DashboardItem, DashboardReport, LLMModel, DbConnection, TableInfo, DbDialect } from './types';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
+import EnhancedDashboard from './components/EnhancedDashboard';
 import SqlChart from './components/SqlChart';
+import AutoDashboardGenerator from './components/AutoDashboardGenerator';
 import { queryModel } from './services/llmRouter';
-import { introspectDatabase } from './services/introspectionService';
+import { regenerateSingleWidget } from './services/autoDashboardService';
+import { introspectDatabase, parseConnectionString, validateConnectionString } from './services/introspectionService';
 import { 
   SendIcon, 
   TerminalIcon, 
   LayoutDashboardIcon, 
   MessageSquareIcon, 
-  ChevronDownIcon, 
   PinIcon, 
   CheckIcon,
   DatabaseIcon,
@@ -30,7 +32,10 @@ import {
   ArrowRightIcon,
   FileTextIcon,
   Code2Icon,
-  BarChart3Icon
+  BarChart3Icon,
+  Link2Icon,
+  AlertCircleIcon,
+  SparklesIcon
 } from 'lucide-react';
 
 // Sub-component for Assistant Response to manage local tab state per message
@@ -124,6 +129,7 @@ const AssistantResponse: React.FC<{
                 </div>
                 <SqlChart
                   {...msg.chartConfig!}
+                  type={msg.chartConfig!.type as 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed'}
                   data={msg.chartData!}
                   onUpdateScheme={(scheme) => onUpdateScheme(msg.id, scheme)}
                 />
@@ -147,18 +153,29 @@ const App: React.FC = () => {
   const [dashboards, setDashboards] = useState<DashboardReport[]>([]);
   const [currentDashboardId, setCurrentDashboardId] = useState<string | null>(null);
 
+  // Add debugging
+  useEffect(() => {
+    console.log('App component mounted');
+    console.log('Active tab:', activeTab);
+    console.log('Conversations:', conversations);
+    console.log('Dashboards:', dashboards);
+  }, [activeTab, conversations, dashboards]);
+
   // Connection State
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connections, setConnections] = useState<DbConnection[]>([]);
+  const [useConnectionString, setUseConnectionString] = useState(!!import.meta.env.VITE_DB_CONNECTION_STRING);
   const [connForm, setConnForm] = useState({
-    name: '',
-    host: '',
+    name: import.meta.env.VITE_DB_NAME || '',
+    host: import.meta.env.VITE_DB_HOST || '',
     port: '5432',
-    user: '',
-    password: '',
-    database: '',
-    dialect: 'postgresql' as DbDialect
+    user: import.meta.env.VITE_DB_USER || '',
+    password: import.meta.env.VITE_DB_PASSWORD || '',
+    database: import.meta.env.VITE_DB_NAME || '',
+    dialect: (import.meta.env.VITE_DB_DIALECT || 'postgresql') as DbDialect,
+    connectionString: import.meta.env.VITE_DB_CONNECTION_STRING || ''
   });
 
   // Export State
@@ -167,11 +184,23 @@ const App: React.FC = () => {
   const [selectedTargetId, setSelectedTargetId] = useState<string | 'new' | null>(null);
   const [exportDashboardName, setExportDashboardName] = useState('');
 
+  // Auto-Dashboard State
+  const [isAutoDashboardOpen, setIsAutoDashboardOpen] = useState(false);
+
+  // Enhanced Dashboard Mode (toggle between basic and enhanced dashboard)
+  const [useEnhancedDashboard, setUseEnhancedDashboard] = useState(true);
+
   // UI State
   const [userInput, setUserInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<LLMModel>('gemini-3-pro');
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Settings State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [openAiApiKey, setOpenAiApiKey] = useState(() => localStorage.getItem('sqlmind_openai_key') || import.meta.env.VITE_OPENAI_API_KEY || '');
+
+  // LLM Model - fixed to GPT-4o
+  const selectedModel: LLMModel = 'gpt-4o';
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -202,34 +231,83 @@ const App: React.FC = () => {
   const currentDashboard = dashboards.find(d => d.id === currentDashboardId);
 
   const handleConnect = async () => {
-    if (!connForm.host || !connForm.database || !connForm.user) return;
+    setConnectionError(null);
+    
+    // Validate inputs based on connection mode
+    if (useConnectionString) {
+      const validation = validateConnectionString(connForm.connectionString);
+      if (!validation.valid) {
+        setConnectionError(validation.error || 'Invalid connection string');
+        return;
+      }
+      // Also validate username/password for JDBC URLs that don't include credentials
+      if (!connForm.user || !connForm.password) {
+        setConnectionError('Username and Password are required when using a JDBC connection string');
+        return;
+      }
+    } else {
+      if (!connForm.host || !connForm.database || !connForm.user) {
+        setConnectionError('Please fill in all required fields: Host, Database, and User');
+        return;
+      }
+    }
+    
     setIsConnecting(true);
     
     try {
-      const tables = await introspectDatabase({
-        host: connForm.host,
-        database: connForm.database,
-        username: connForm.user,
-        dialect: connForm.dialect
-      });
+      let connectionConfig: any = {
+        dialect: connForm.dialect,
+        password: connForm.password,
+      };
+
+      // If using connection string, parse it to get individual values
+      if (useConnectionString && connForm.connectionString) {
+        const parsed = parseConnectionString(connForm.connectionString, connForm.dialect);
+        connectionConfig = {
+          ...connectionConfig,
+          ...parsed,
+          // Override with form values if provided (for JDBC URLs that don't include credentials)
+          username: connForm.user || parsed.username,
+          password: connForm.password || parsed.password,
+          connectionString: connForm.connectionString,
+          useConnectionString: true,
+        };
+      } else {
+        connectionConfig = {
+          ...connectionConfig,
+          host: connForm.host,
+          port: connForm.port,
+          username: connForm.user,
+          database: connForm.database,
+        };
+      }
+
+      const tables = await introspectDatabase(connectionConfig);
 
       const newConn: DbConnection = {
         id: Date.now().toString(),
-        name: connForm.name || connForm.database,
-        host: connForm.host,
-        port: connForm.port,
-        username: connForm.user,
-        database: connForm.database,
+        name: connForm.name || connectionConfig.database,
+        host: connectionConfig.host,
+        port: connectionConfig.port,
+        username: connectionConfig.username,
+        database: connectionConfig.database,
         dialect: connForm.dialect,
+        connectionString: useConnectionString ? connForm.connectionString : undefined,
+        useConnectionString: useConnectionString,
         tables: tables,
         isActive: true,
         status: 'connected'
       };
 
+      // Store password securely for SQL execution (needed for queries)
+      localStorage.setItem(`sqlmind_db_password_${newConn.id}`, connectionConfig.password || '');
+
       setConnections(prev => prev.map(c => ({...c, isActive: false})).concat(newConn));
-      setConnForm({ name: '', host: '', port: '5432', user: '', password: '', database: '', dialect: 'postgresql' });
-    } catch (err) {
+      setConnForm({ name: '', host: '', port: '5432', user: '', password: '', database: '', dialect: 'postgresql', connectionString: '' });
+      setConnectionError(null);
+    } catch (err: any) {
       console.error(err);
+      setConnectionError(err.message || 'Failed to connect to database. Please check your credentials.');
     } finally {
       setIsConnecting(false);
     }
@@ -245,11 +323,16 @@ const App: React.FC = () => {
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!userInput.trim() || isTyping || !activeConnection) return;
+    
+    if (!openAiApiKey) {
+      setIsSettingsOpen(true);
+      return;
+    }
 
     let targetId = currentChatId;
     if (!targetId) {
       const id = Date.now().toString();
-      const newConv: Conversation = { id, title: userInput.slice(0, 30) + '...', messages: [], updatedAt: Date.now(), model: selectedModel };
+      const newConv: Conversation = { id, title: userInput.slice(0, 30) + '...', messages: [], updatedAt: Date.now(), model: 'gpt-4o' };
       setConversations([newConv, ...conversations]);
       targetId = id;
       setCurrentChatId(id);
@@ -264,13 +347,14 @@ const App: React.FC = () => {
 
     try {
       const schemaContext = getFullSchemaContext();
-      const result = await queryModel(userMessage.content, schemaContext, selectedModel, (chunkText) => {
+      const result = await queryModel(userMessage.content, schemaContext, openAiApiKey, activeConnection || null, (chunkText) => {
         setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, content: chunkText } : m) } : c));
       });
       
       setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, ...result, content: result.content || "Report generated." } : m) } : c));
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
+      setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, content: `Error: ${error.message}` } : m) } : c));
     } finally {
       setIsTyping(false);
     }
@@ -281,6 +365,9 @@ const App: React.FC = () => {
   };
 
   const deleteConnection = (id: string) => {
+    // Remove stored password
+    localStorage.removeItem(`sqlmind_db_password_${id}`);
+    
     const newConns = connections.filter(c => c.id !== id);
     if (activeConnection?.id === id && newConns.length > 0) newConns[0].isActive = true;
     setConnections(newConns);
@@ -306,10 +393,95 @@ const App: React.FC = () => {
     } : d));
   };
 
+  // EnhancedDashboard handlers
+  const updateDashboardItem = (itemId: string, updates: Partial<DashboardItem>) => {
+    setDashboards(prev => prev.map(d => d.id === currentDashboardId ? { 
+      ...d, 
+      items: d.items.map(item => item.id === itemId ? { ...item, ...updates } : item),
+      updatedAt: Date.now()
+    } : d));
+  };
+
+  const updateDashboardLayout = (updatedItems: DashboardItem[]) => {
+    setDashboards(prev => prev.map(d => d.id === currentDashboardId ? { 
+      ...d, 
+      items: updatedItems,
+      updatedAt: Date.now()
+    } : d));
+  };
+
+  const handleRegenerateWidget = async (widgetId: string, sql: string, refinementPrompt?: string): Promise<void> => {
+    if (!activeConnection || !openAiApiKey) return;
+    
+    const widget = currentDashboard?.items.find(i => i.id === widgetId);
+    if (!widget) return;
+
+    // Update widget to loading state
+    updateDashboardItem(widgetId, { isLoading: true, sqlError: undefined });
+
+    try {
+      const schemaContext = getFullSchemaContext();
+      
+      // Convert DashboardItem to AutoDashboardWidget format for regeneration
+      const widgetForRegeneration = {
+        id: widget.id,
+        title: widget.title,
+        sql: widget.sql || sql,
+        explanation: '', // Required by AutoDashboardWidget
+        sqlError: widget.sqlError,
+        chartConfig: {
+          type: widget.chartConfig.type as 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed',
+          xAxis: widget.chartConfig.xAxis,
+          yAxis: widget.chartConfig.yAxis,
+          title: widget.chartConfig.title,
+          colorScheme: widget.chartConfig.colorScheme
+        },
+        chartData: widget.chartData,
+        addedAt: widget.addedAt
+      };
+      
+      const regeneratedWidget = await regenerateSingleWidget(
+        widgetForRegeneration,
+        schemaContext,
+        openAiApiKey,
+        activeConnection,
+        refinementPrompt // Pass refinement prompt to the service
+      );
+
+      updateDashboardItem(widgetId, {
+        chartData: regeneratedWidget.chartData,
+        sql: regeneratedWidget.sql,
+        isLoading: false,
+        sqlError: regeneratedWidget.sqlError,
+        lastRefreshed: Date.now()
+      });
+    } catch (error: any) {
+      updateDashboardItem(widgetId, {
+        isLoading: false,
+        sqlError: error.message || 'Failed to regenerate widget'
+      });
+    }
+  };
+
   const openExportDialog = (message: Message) => {
     setPendingExportMessage(message);
     setSelectedTargetId(currentDashboardId || (dashboards.length > 0 ? dashboards[0].id : 'new'));
     setIsExportDialogOpen(true);
+  };
+
+  // Auto-Dashboard handler - creates a new dashboard with generated widgets
+  const handleAutoDashboardGenerated = (items: DashboardItem[], title: string) => {
+    const newDashboardId = Date.now().toString();
+    const newDashboard: DashboardReport = {
+      id: newDashboardId,
+      title: title,
+      items: items,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    setDashboards(prev => [newDashboard, ...prev]);
+    setCurrentDashboardId(newDashboardId);
+    setActiveTab('dashboard');
   };
 
   const handleFinalExport = () => {
@@ -321,7 +493,7 @@ const App: React.FC = () => {
       updatedDashboards = [{ id: newId, title: exportDashboardName || 'New Analysis', items: [], createdAt: Date.now(), updatedAt: Date.now() }, ...dashboards];
       targetId = newId;
     }
-    const newItem: DashboardItem = { id: Date.now().toString(), title: pendingExportMessage.chartConfig.title, chartConfig: { ...pendingExportMessage.chartConfig }, chartData: JSON.parse(JSON.stringify(pendingExportMessage.chartData)), addedAt: Date.now(), colSpan: 6, height: 350 };
+    const newItem: DashboardItem = { id: Date.now().toString(), title: pendingExportMessage.chartConfig.title, chartConfig: { ...pendingExportMessage.chartConfig }, chartData: JSON.parse(JSON.stringify(pendingExportMessage.chartData)), addedAt: Date.now(), colSpan: 6, height: 500 };
     updatedDashboards = updatedDashboards.map(d => d.id === targetId ? { ...d, items: [newItem, ...d.items], updatedAt: Date.now() } : d);
     setDashboards(updatedDashboards);
     setIsExportDialogOpen(false);
@@ -356,18 +528,28 @@ const App: React.FC = () => {
 
           <div className="flex items-center gap-3">
             {activeTab === 'chat' && (
-              <div className="relative group">
-                <button className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-slate-50">
-                  <CpuIcon className={`w-4 h-4 text-blue-500`} />
-                  {selectedModel.replace('-', ' ')}
-                  <ChevronDownIcon className="w-3.5 h-3.5 opacity-40" />
-                </button>
-                <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all overflow-hidden z-50">
-                   {['gemini-3-pro', 'gemini-3-flash', 'claude-3-5', 'gpt-4o'].map(m => (
-                     <button key={m} onClick={() => setSelectedModel(m as LLMModel)} className="w-full text-left px-4 py-3 hover:bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-700">{m}</button>
-                   ))}
+              <>
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-black uppercase tracking-widest">
+                  <CpuIcon className="w-4 h-4 text-green-500" />
+                  GPT-4o
                 </div>
-              </div>
+                <button 
+                  onClick={() => setIsSettingsOpen(true)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${openAiApiKey ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}
+                >
+                  <SettingsIcon className="w-3.5 h-3.5" />
+                  {openAiApiKey ? 'API Key Set' : 'Set API Key'}
+                </button>
+              </>
+            )}
+            {activeTab === 'dashboard' && (
+              <button 
+                onClick={() => setIsAutoDashboardOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:from-violet-700 hover:to-indigo-700 shadow-lg shadow-violet-500/20"
+              >
+                <SparklesIcon className="w-3.5 h-3.5" />
+                Auto-Generate Dashboard
+              </button>
             )}
             <button 
               onClick={() => setIsDbModalOpen(true)}
@@ -375,7 +557,6 @@ const App: React.FC = () => {
             >
               <DatabaseIcon className={`w-3.5 h-3.5 ${activeConnection ? 'text-green-400' : 'text-slate-400'}`} />
               <span className="max-w-[120px] truncate">{activeConnection ? activeConnection.database : 'Connect DB'}</span>
-              <SettingsIcon className="w-3.5 h-3.5 ml-1 opacity-40" />
             </button>
           </div>
         </header>
@@ -442,13 +623,27 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="h-full overflow-y-auto dashboard-scroll-container">
-              <Dashboard 
-                items={currentDashboard?.items || []} 
-                title={currentDashboard?.title} 
-                onRemove={removeFromDashboard} 
-                onUpdateSize={updateDashboardItemSize} 
-                onUpdateItemScheme={updateDashboardItemColorScheme} 
-              />
+              {useEnhancedDashboard ? (
+                <EnhancedDashboard
+                  dashboard={currentDashboard || null}
+                  items={currentDashboard?.items || []}
+                  title={currentDashboard?.title}
+                  onRemove={removeFromDashboard}
+                  onUpdateItem={updateDashboardItem}
+                  onUpdateLayout={updateDashboardLayout}
+                  onRegenerateWidget={handleRegenerateWidget}
+                  onUpdateItemScheme={updateDashboardItemColorScheme}
+                  dbConnection={activeConnection || null}
+                />
+              ) : (
+                <Dashboard 
+                  items={currentDashboard?.items || []} 
+                  title={currentDashboard?.title}
+                  dashboardId={currentDashboard?.id}
+                  onRemove={removeFromDashboard} 
+                  onUpdateItemScheme={updateDashboardItemColorScheme} 
+                />
+              )}
             </div>
           )}
         </main>
@@ -492,27 +687,101 @@ const App: React.FC = () => {
                <div className="flex-1 overflow-y-auto p-10 grid grid-cols-2 gap-12">
                   <div className="space-y-6">
                      <div className="p-6 bg-slate-50 border border-slate-100 rounded-3xl space-y-4">
-                        <div className="flex items-center gap-3 mb-2">
-                           <GlobeIcon className="w-4 h-4 text-blue-500" />
-                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-900">Database Credentials</span>
+                        <div className="flex items-center justify-between mb-2">
+                           <div className="flex items-center gap-3">
+                              <GlobeIcon className="w-4 h-4 text-blue-500" />
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-900">Database Credentials</span>
+                           </div>
+                           {/* Connection String Toggle */}
+                           <button 
+                              onClick={() => setUseConnectionString(!useConnectionString)}
+                              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${useConnectionString ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-500 hover:border-blue-300'}`}
+                           >
+                              <Link2Icon className="w-3 h-3" />
+                              {useConnectionString ? 'Using URL' : 'Use URL'}
+                           </button>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                           <input value={connForm.host} onChange={e => setConnForm({...connForm, host: e.target.value})} placeholder="Host" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                           <input value={connForm.port} onChange={e => setConnForm({...connForm, port: e.target.value})} placeholder="Port" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                           <input value={connForm.user} onChange={e => setConnForm({...connForm, user: e.target.value})} placeholder="User" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                           <input type="password" value={connForm.password} onChange={e => setConnForm({...connForm, password: e.target.value})} placeholder="Password" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                        </div>
-                        <input value={connForm.database} onChange={e => setConnForm({...connForm, database: e.target.value})} placeholder="Database Name" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                        <select value={connForm.dialect} onChange={e => setConnForm({...connForm, dialect: e.target.value as DbDialect})} className="w-full p-3 rounded-xl border text-sm font-semibold bg-white">
-                           <option value="postgresql">PostgreSQL</option>
-                           <option value="mysql">MySQL</option>
-                           <option value="sqlserver">SQL Server</option>
-                           <option value="sqlite">SQLite</option>
-                        </select>
-                        <button onClick={handleConnect} disabled={isConnecting} className="w-full py-4 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl flex items-center justify-center gap-2">
-                           {isConnecting ? <><Loader2Icon className="w-4 h-4 animate-spin" /> Verifying...</> : <><ArrowRightIcon className="w-4 h-4" /> Connect & Introspect</>}
+                        
+                        {/* Connection String Input */}
+                        {useConnectionString ? (
+                           <div className="space-y-4">
+                              <div>
+                                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Connection String / JDBC URL</label>
+                                 <input 
+                                    value={connForm.connectionString} 
+                                    onChange={e => setConnForm({...connForm, connectionString: e.target.value})} 
+                                    placeholder="jdbc:postgresql://host:5432/database?sslmode=require" 
+                                    className="w-full p-3 rounded-xl border text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                                 />
+                                 <p className="text-[10px] text-slate-400 mt-2">Supports: jdbc:postgresql://host:port/database or postgresql://host:port/database</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-4">
+                                 <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Username *</label>
+                                    <input 
+                                       value={connForm.user} 
+                                       onChange={e => setConnForm({...connForm, user: e.target.value})} 
+                                       placeholder="Database username" 
+                                       className="w-full p-3 rounded-xl border text-sm font-semibold" 
+                                    />
+                                 </div>
+                                 <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Password *</label>
+                                    <input 
+                                       type="password" 
+                                       value={connForm.password} 
+                                       onChange={e => setConnForm({...connForm, password: e.target.value})} 
+                                       placeholder="Database password" 
+                                       className="w-full p-3 rounded-xl border text-sm font-semibold" 
+                                    />
+                                 </div>
+                              </div>
+                              <input 
+                                 value={connForm.name} 
+                                 onChange={e => setConnForm({...connForm, name: e.target.value})} 
+                                 placeholder="Connection Name (optional)" 
+                                 className="w-full p-3 rounded-xl border text-sm font-semibold" 
+                              />
+                              <select value={connForm.dialect} onChange={e => setConnForm({...connForm, dialect: e.target.value as DbDialect})} className="w-full p-3 rounded-xl border text-sm font-semibold bg-white">
+                                 <option value="postgresql">PostgreSQL</option>
+                                 <option value="mysql">MySQL</option>
+                                 <option value="sqlserver">SQL Server</option>
+                                 <option value="sqlite">SQLite</option>
+                              </select>
+                           </div>
+                        ) : (
+                           <>
+                              <div className="grid grid-cols-2 gap-4">
+                                 <input value={connForm.host} onChange={e => setConnForm({...connForm, host: e.target.value})} placeholder="Host" className="w-full p-3 rounded-xl border text-sm font-semibold" />
+                                 <input value={connForm.port} onChange={e => setConnForm({...connForm, port: e.target.value})} placeholder="Port" className="w-full p-3 rounded-xl border text-sm font-semibold" />
+                              </div>
+                              <div className="grid grid-cols-2 gap-4">
+                                 <input value={connForm.user} onChange={e => setConnForm({...connForm, user: e.target.value})} placeholder="User" className="w-full p-3 rounded-xl border text-sm font-semibold" />
+                                 <input type="password" value={connForm.password} onChange={e => setConnForm({...connForm, password: e.target.value})} placeholder="Password" className="w-full p-3 rounded-xl border text-sm font-semibold" />
+                              </div>
+                              <input value={connForm.database} onChange={e => setConnForm({...connForm, database: e.target.value})} placeholder="Database Name" className="w-full p-3 rounded-xl border text-sm font-semibold" />
+                              <select value={connForm.dialect} onChange={e => setConnForm({...connForm, dialect: e.target.value as DbDialect})} className="w-full p-3 rounded-xl border text-sm font-semibold bg-white">
+                                 <option value="postgresql">PostgreSQL</option>
+                                 <option value="mysql">MySQL</option>
+                                 <option value="sqlserver">SQL Server</option>
+                                 <option value="sqlite">SQLite</option>
+                              </select>
+                           </>
+                        )}
+                        
+                        {/* Error Message */}
+                        {connectionError && (
+                           <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-100 rounded-2xl">
+                              <AlertCircleIcon className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                              <div>
+                                 <p className="text-sm font-bold text-red-700">Connection Failed</p>
+                                 <p className="text-xs text-red-600 mt-1">{connectionError}</p>
+                              </div>
+                           </div>
+                        )}
+                        
+                        <button onClick={handleConnect} disabled={isConnecting} className="w-full py-4 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl flex items-center justify-center gap-2 disabled:opacity-50">
+                           {isConnecting ? <><Loader2Icon className="w-4 h-4 animate-spin" /> Connecting...</> : <><ArrowRightIcon className="w-4 h-4" /> Connect & Introspect</>}
                         </button>
                      </div>
                      <div className="p-6 bg-slate-950 rounded-3xl text-white space-y-3">
@@ -579,6 +848,55 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 no-print">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+             <div className="flex justify-between items-start mb-6">
+                <div>
+                   <h3 className="text-2xl font-black tracking-tight">Settings</h3>
+                   <p className="text-sm text-slate-500">Configure your API keys</p>
+                </div>
+                <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors"><XIcon className="w-5 h-5 text-slate-400" /></button>
+             </div>
+             
+             <div className="space-y-6">
+               <div>
+                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block px-1">OpenAI API Key</label>
+                 <input 
+                   type="password"
+                   value={openAiApiKey} 
+                   onChange={e => setOpenAiApiKey(e.target.value)} 
+                   placeholder="sk-..." 
+                   className="w-full p-4 rounded-2xl border font-mono text-sm focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500" 
+                 />
+                 <p className="text-xs text-slate-400 mt-2 px-1">Your API key is stored locally and never sent to our servers.</p>
+               </div>
+               
+               <button 
+                 onClick={() => {
+                   localStorage.setItem('sqlmind_openai_key', openAiApiKey);
+                   setIsSettingsOpen(false);
+                 }} 
+                 className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-black transition-all active:scale-95 shadow-xl shadow-slate-900/10"
+               >
+                 Save Settings
+               </button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-Dashboard Generator Modal */}
+      <AutoDashboardGenerator
+        isOpen={isAutoDashboardOpen}
+        onClose={() => setIsAutoDashboardOpen(false)}
+        onDashboardGenerated={handleAutoDashboardGenerated}
+        dbConnection={activeConnection || null}
+        schemaContext={getFullSchemaContext()}
+        apiKey={openAiApiKey}
+      />
     </div>
   );
 };
