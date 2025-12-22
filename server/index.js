@@ -131,6 +131,12 @@ async function introspectPostgres(config) {
     await pool.end();
     
     console.log(`Found ${result.rows.length} tables`);
+    console.log('--- FULL DATABASE SCHEMA ---');
+    result.rows.forEach(row => {
+      console.log(`Table: ${row.table_name}`);
+      row.columns.forEach(col => console.log(`  ${col}`));
+    });
+    console.log('--- END OF SCHEMA ---');
 
     return result.rows.map(row => ({
       name: row.table_name,
@@ -368,6 +374,48 @@ async function executeQuery(config, query) {
   throw new Error(`Unsupported dialect: ${config.dialect}`);
 }
 
+// --- Self-Healing Query Middleware ---
+async function selfHealingQuery(config, sql, maxRetries = 2) {
+  let attempt = 0;
+  let lastError = null;
+  let result = [];
+  let adjustedSql = sql;
+
+  while (attempt <= maxRetries) {
+    try {
+      result = await executeQuery(config, adjustedSql);
+      // Check for NaN or null in numeric results
+      if (result && result.length > 0) {
+        const hasNaN = result.some(row => Object.values(row).some(v => typeof v === 'number' && (isNaN(v) || v === null)));
+        if (!hasNaN) return result;
+      }
+      // If NaN/null found, adjust SQL
+      lastError = 'NaN or null detected';
+    } catch (err) {
+      lastError = err.message;
+    }
+    // Adjust SQL: add COALESCE and NULLIF for numeric columns
+    adjustedSql = adjustedSql.replace(/(SUM|AVG|COUNT|MIN|MAX)\(([^)]+)\)/gi, '$1(COALESCE($2,0))')
+                             .replace(/\/(\s*\w+)/g, '/NULLIF($1,0)');
+    attempt++;
+  }
+  throw new Error(`Self-healing failed: ${lastError}`);
+}
+
+// --- Helper: Map business terms in prompt to schema columns using semantic layer ---
+function mapPromptBusinessTerms(prompt) {
+  // For each table and business term, replace in prompt
+  let mappedPrompt = prompt;
+  for (const [table, mapping] of Object.entries(semanticLayer)) {
+    for (const [businessTerm, column] of Object.entries(mapping)) {
+      // Replace business term with column name (case-insensitive, word boundary)
+      const regex = new RegExp(`\\b${businessTerm}\\b`, 'gi');
+      mappedPrompt = mappedPrompt.replace(regex, column);
+    }
+  }
+  return mappedPrompt;
+}
+
 // OpenAI Chat Completion endpoint (proxied to avoid CORS issues)
 app.post('/api/chat', async (req, res) => {
   const { prompt, schemaContext, apiKey, dbConnection } = req.body;
@@ -378,6 +426,9 @@ app.post('/api/chat', async (req, res) => {
   if (!openaiApiKey) {
     return res.status(400).json({ success: false, error: 'OpenAI API key is required. Please add it in Settings or set OPENAI_API_KEY in .env file.' });
   }
+
+  // Map business terms in prompt before sending to LLM
+  const mappedPrompt = mapPromptBusinessTerms(prompt);
 
   const systemPrompt = `You are a world-class Data Analyst and SQL Expert.
 Given the database schema provided below, translate the user's natural language question into a valid SQL query and visualization config.
@@ -435,7 +486,7 @@ Do not wrap the JSON in markdown blocks.`;
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt }
+          { role: 'user', content: mappedPrompt }
         ],
         response_format: { type: 'json_object' },
         temperature: 0.3, // Lower temperature for more consistent SQL
@@ -580,7 +631,7 @@ function calculateNextRun(frequency, time) {
 // AUTO-DASHBOARD GENERATION ENDPOINT
 // Generates multiple dashboard widgets from a single prompt
 app.post('/api/generate-dashboard', async (req, res) => {
-  const { prompt, schemaContext, apiKey, dbConnection, widgetCount = 8 } = req.body;
+  const { prompt, schemaContext, apiKey, dbConnection, widgetCount = 8 } = req.body; // Removed filters
   
   // Use provided API key only if it's a non-empty string, otherwise fall back to env variable
   const openaiApiKey = (apiKey && apiKey.trim()) ? apiKey.trim() : process.env.OPENAI_API_KEY;
@@ -591,16 +642,21 @@ app.post('/api/generate-dashboard', async (req, res) => {
     return res.status(400).json({ success: false, error: 'OpenAI API key is required. Set it in the app settings or in the .env file.' });
   }
 
-  if (!schemaContext) {
+  // Ensure schemaContext is always a valid, non-empty string
+  if (!schemaContext || typeof schemaContext !== 'string' || !schemaContext.trim()) {
     return res.status(400).json({ success: false, error: 'Database schema is required. Please connect to a database first.' });
   }
 
+  // Map business terms in prompt before sending to LLM
+  const mappedPrompt = mapPromptBusinessTerms(prompt);
+
+  // Add actionable business suggestion instructions for feature importance and correlation analysis
   const systemPrompt = `You are a world-class Data Analyst and Dashboard Designer.
 
 DATABASE SCHEMA:
 ${schemaContext}
 
-TASK: Generate ${widgetCount} analytics widgets for: "${prompt}"
+TASK: Generate ${widgetCount} analytics widgets for: "${mappedPrompt}"
 
 STRICT HIERARCHY & FLOW:
 1. KPI/STATISTICS ROW: The first widgets in the response MUST be a row of KPI cards (totals, averages, counts, min/max) relevant to the prompt.
@@ -620,7 +676,6 @@ SELF-HEALING & ACCURACY GUARDRAILS:
 - JOIN INTEGRITY: Explicitly identify the relationship path (e.g., join 'products' to 'internal_sales_data' on 'product_id').
 - AGGREGATION: For time-series, use proper date grouping (e.g., DATE_TRUNC) to ensure the x-axis is a continuous timeline.
 - TIME SERIES: Always use the most granular date/time column available for trends.
-
 
 CHART TYPE GUIDELINES:
 - 'bar': Categorical comparisons, rankings, top-N lists
@@ -646,11 +701,7 @@ COLOR SCHEME OPTIONS:
 
 ADVANCED DASHBOARD GUIDELINES:
 - Group related widgets visually and logically (e.g., KPIs/statistics row, trends section, distribution section).
-- Use drill-down or filterable widgets if the schema supports it (e.g., by date, region, product).
-- For time-series, always use the most granular available date/time column.
-- For geo widgets, only use columns with valid location data (city, country, region, coordinates).
-- For heatmaps, ensure both axes have meaningful categories and enough data points.
-- For composed charts, combine metrics that are complementary (e.g., revenue and order count).
+- For widgets analyzing feature importance or correlation (e.g., pearson_score, spearman_score, feature_importance), provide a specific actionable business suggestion in the explanation field, such as "Increase marketing in Region X" or "Reduce inventory for Product Y" based on the data.
 - Always optimize for readability and business insight: avoid clutter, use clear labels, and prioritize actionable metrics.
 - If the schema includes user, product, or transaction tables, prioritize widgets that show trends, distributions, and top performers.
 - If possible, include at least one widget that highlights anomalies, outliers, or recent changes.
@@ -663,7 +714,7 @@ RESPONSE FORMAT (JSON):
     {
       "title": "Widget Title",
       "sql": "SELECT ...",
-      "explanation": "What this widget shows",
+      "explanation": "What this widget shows. If analyzing feature importance or correlation, include a specific actionable business suggestion.",
       "chartConfig": {
         "type": "bar|line|pie|area|radar|scatter|composed|gauge|heatmap|geo",
         "xAxis": "column_name",
@@ -690,7 +741,7 @@ Do not wrap JSON in markdown. Return only valid JSON.
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Create a dashboard about: ${prompt}` }
+          { role: 'user', content: `Create a dashboard about: ${mappedPrompt}` }
         ],
         response_format: { type: 'json_object' },
         temperature: 0.4,
@@ -719,6 +770,7 @@ Do not wrap JSON in markdown. Return only valid JSON.
     for (const widget of parsed.widgets) {
       let chartData = null;
       let sqlError = null;
+      let smartNarrative = null;
       
       if (dbConnection && widget.sql) {
         try {
@@ -731,20 +783,38 @@ Do not wrap JSON in markdown. Return only valid JSON.
             dialect: dbConnection.dialect || 'postgresql',
             ssl: dbConnection.ssl || dbConnection.host.includes('azure.com')
           };
-          
           chartData = await executeQuery(config, widget.sql);
-          console.log(`✅ Widget "${widget.title}": ${chartData.length} rows`);
-          
           // Limit rows for visualization
           if (chartData.length > 50) {
             chartData = chartData.slice(0, 50);
           }
+          // --- Smart Narrative Generation ---
+          // Use OpenAI to generate a plain-language summary for this chart
+          const narrativePrompt = `You are a data analyst. Given the following chart data and its explanation, write a concise, plain-language summary (2-3 sentences) for non-technical users. Focus on key takeaways, trends, and any notable points.\n\nChart Explanation: ${widget.explanation}\n\nChart Data (JSON): ${JSON.stringify(chartData).slice(0, 2000)}\n`;
+          const narrativeRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${openaiApiKey}`
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o',
+              messages: [
+                { role: 'system', content: 'You are a helpful data analyst.' },
+                { role: 'user', content: narrativePrompt }
+              ],
+              temperature: 0.4,
+              max_tokens: 200
+            })
+          });
+          if (narrativeRes.ok) {
+            const narrativeData = await narrativeRes.json();
+            smartNarrative = narrativeData.choices?.[0]?.message?.content?.trim() || null;
+          }
         } catch (queryError) {
-          console.error(`❌ Widget "${widget.title}" error:`, queryError.message);
           sqlError = queryError.message;
         }
       }
-      
       widgetsWithData.push({
         id: `auto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         title: widget.title,
@@ -753,6 +823,7 @@ Do not wrap JSON in markdown. Return only valid JSON.
         chartConfig: widget.chartConfig,
         chartData: chartData || [],
         sqlError: sqlError,
+        smartNarrative: smartNarrative, // <-- Attach smart narrative
         addedAt: Date.now()
       });
     }
@@ -929,10 +1000,168 @@ Return only valid JSON without markdown blocks.`;
   }
 });
 
+// --- Semantic Layer Mapping ---
+const semanticLayer = {
+  budgets: {
+    "Target Value": "budget_value",
+    "Product ID": "product_id",
+    "Actual Sales to Date": "product_actual_sale",
+    "Budget Date": "date"
+  },
+  companies: {
+    "Company Name": "name"
+  },
+  external_indicators: {
+    "Country": "country_name",
+    "Indicator Detail": "indicator_full_name",
+    "Indicator Name": "indicator_name",
+    "Reporting Date": "date",
+    "Index Value": "value"
+  },
+  forecast_sales_budgets: {
+    "Forecast Date": "date",
+    "Predicted Sales": "forecasted_sales",
+    "Allocated Budget": "forecasted_budget",
+    "Product ID": "product_id"
+  },
+  forecasts: {
+    "Forecast Value": "forecast_value",
+    "Product ID": "product_id",
+    "Forecast Date": "date"
+  },
+  internal_sales_data: {
+    "Cleaned Value": "transformed_value",
+    "Sales Date": "date",
+    "Product ID": "product_id",
+    "Company ID": "company_id",
+    "Raw Revenue": "sales_value"
+  },
+  lagged_features: {
+    "Product ID": "product_id",
+    "Observation Date": "date",
+    "Feature Name": "feature_name",
+    "Feature Value": "feature_value"
+  },
+  product_feature_importances: {
+    "Calculation Date": "calculation_date",
+    "Product ID": "product_id",
+    "Feature": "feature_name",
+    "Pearson Correlation": "pearson_score",
+    "Spearman Correlation": "spearman_score"
+  },
+  product_predictions: {
+    "Prediction Date": "date",
+    "Realized Sales": "product_actual_sale",
+    "Product ID": "product_id",
+    "AI Predicted Sales": "predicted_sales"
+  },
+  products: {
+    "Product Name": "name",
+    "Company ID": "company_id"
+  },
+  seasonality_autoregs: {
+    "Forecast Output": "forecast_value",
+    "Fiscal Quarter": "quarter",
+    "Product ID": "product_id",
+    "Calculated On": "calculation_date",
+    "Average Seasonal Component": "seasonal_component_avg"
+  },
+  trained_models: {
+    "Root Mean Square Error": "rmse",
+    "Mean Absolute Percentage Error": "mape",
+    "Mean Absolute Error": "mae",
+    "Product ID": "product_id",
+    "Model Name": "model_name",
+    "Training Timestamp": "train_date",
+    "Model Config": "hyperparameters_json"
+  }
+};
+
+function mapBusinessLogic(table, businessTerm) {
+  return semanticLayer[table]?.[businessTerm] || businessTerm;
+}
+
+// --- Multi-Turn Chat Endpoint ---
+// Maintains chat history for context-aware follow-up questions
+const chatHistories = {};
+
+app.post('/api/multiturn-chat', async (req, res) => {
+  const { userId, prompt, schemaContext, apiKey, dbConnection, chatHistory = [] } = req.body;
+  const openaiApiKey = (apiKey && apiKey.trim()) ? apiKey.trim() : process.env.OPENAI_API_KEY;
+  if (!openaiApiKey) {
+    return res.status(400).json({ success: false, error: 'OpenAI API key is required.' });
+  }
+  // Maintain chat history per user
+  if (!chatHistories[userId]) chatHistories[userId] = [];
+  // Add previous turns
+  const messages = [
+    { role: 'system', content: `You are a world-class Data Analyst and SQL Expert. Given the database schema below, answer user questions with SQL and plain-language explanations. Maintain context across turns.\n\nSCHEMA CONTEXT:\n${schemaContext}` },
+    ...chatHistories[userId],
+    { role: 'user', content: prompt }
+  ];
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiApiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages,
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+        max_tokens: 2048
+      })
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error?.message || `OpenAI API error: ${response.statusText}`);
+    }
+    const data = await response.json();
+    const content = data.choices[0]?.message?.content;
+    if (!content) throw new Error('No response from OpenAI');
+    const parsed = JSON.parse(content);
+    // Save this turn to history
+    chatHistories[userId].push({ role: 'user', content: prompt });
+    chatHistories[userId].push({ role: 'assistant', content: content });
+    // Optionally trim history for memory
+    if (chatHistories[userId].length > 20) chatHistories[userId] = chatHistories[userId].slice(-20);
+    // Optionally execute SQL and attach chartData as in /api/chat
+    let chartData = null;
+    let sqlError = null;
+    if (dbConnection && parsed.sql) {
+      try {
+        const config = {
+          host: dbConnection.host,
+          port: dbConnection.port || '5432',
+          username: dbConnection.username,
+          password: dbConnection.password,
+          database: dbConnection.database,
+          dialect: dbConnection.dialect || 'postgresql',
+          ssl: dbConnection.ssl || dbConnection.host.includes('azure.com')
+        };
+        chartData = await executeQuery(config, parsed.sql);
+        if (chartData.length > 100) chartData = chartData.slice(0, 100);
+      } catch (queryError) {
+        sqlError = queryError.message;
+      }
+    }
+    res.json({
+      success: true,
+      data: {
+        ...parsed,
+        chartData,
+        sqlError,
+        chatHistory: chatHistories[userId]
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Start the server
 app.listen(PORT, () => {
-  console.log(`🚀 Database API server running on http://localhost:${PORT}`);
-  console.log(`📊 Supported dialects: PostgreSQL, MySQL`);
-  console.log(`🤖 OpenAI GPT-4o endpoint available at /api/chat`);
-  console.log(`📋 Report scheduling endpoints available at /api/reports/*`);
-  console.log(`🔑 OpenAI API Key: ${process.env.OPENAI_API_KEY ? 'Loaded from .env (' + process.env.OPENAI_API_KEY.substring(0, 10) + '...)' : 'NOT SET - add OPENAI_API_KEY to .env'}`);
+  console.log(`Server listening on port ${PORT}`);
 });

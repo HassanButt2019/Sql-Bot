@@ -634,6 +634,7 @@ const App: React.FC = () => {
                   onRegenerateWidget={handleRegenerateWidget}
                   onUpdateItemScheme={updateDashboardItemColorScheme}
                   dbConnection={activeConnection || null}
+                  schemaContext={getFullSchemaContext()} // <-- Always pass valid, non-empty schemaContext
                 />
               ) : (
                 <Dashboard 

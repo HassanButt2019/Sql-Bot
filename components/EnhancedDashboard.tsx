@@ -55,6 +55,7 @@ interface EnhancedDashboardProps {
   onUpdateItemScheme?: (id: string, scheme: string) => void;
   dbConnection: DbConnection | null;
   isEmbedMode?: boolean;
+  schemaContext: string; // <-- Explicitly require schemaContext as a prop
 }
 
 const DEFAULT_THEME: ThemeConfig = {
@@ -77,7 +78,8 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
   onRegenerateWidget,
   onUpdateItemScheme,
   dbConnection,
-  isEmbedMode = false
+  isEmbedMode = false,
+  schemaContext // <-- Use schemaContext from props
 }) => {
   const [showShareToast, setShowShareToast] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
@@ -188,6 +190,10 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
     
     return { anomalies, trend };
   };
+
+  // Helper to get dashboard description and schemaContext safely
+  const dashboardDescription = (dashboard && (dashboard as any).description) || title;
+  const dashboardSchemaContext = schemaContext || ((dashboard && (dashboard as any).schemaContext) || '');
 
   // Render widget based on type
   const renderWidget = (item: DashboardItem) => {
@@ -716,6 +722,13 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
                   {/* Widget Content */}
                   <div className="p-2 pb-10 overflow-hidden" style={{ minHeight: CARD_HEIGHT / 2 - 36 }}>
                     {renderWidget({ ...item, height: CARD_HEIGHT - 36 })}
+                    {/* Smart Narrative Display */}
+                    {item.smartNarrative && (
+                      <div className="mt-3 px-3 py-2 bg-slate-50 border-l-4 border-blue-400 rounded-xl text-sm text-slate-700 flex items-start gap-2 animate-in fade-in duration-300">
+                        <LightbulbIcon className="w-4 h-4 text-blue-400 mt-0.5" />
+                        <span>{item.smartNarrative}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Footer */}

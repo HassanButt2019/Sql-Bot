@@ -172,6 +172,7 @@ export interface DashboardItem {
   lastRefreshed?: number;
   // Date filter override (null means use global filter)
   dateFilterOverride?: DateRangeFilter | null;
+  smartNarrative?: string; // AI-generated plain-language summary for non-technical users
 }
 
 export interface DashboardReport {

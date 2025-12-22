@@ -128,7 +128,12 @@ const SqlChart: React.FC<SqlChartProps> = ({
               content={<CustomTooltip {...tooltipCommonProps} />} 
               isAnimationActive={false}
             />
-            <Bar dataKey={yAxis} fill={mainColor} radius={[6, 6, 0, 0]} barSize={32} />
+            <Bar 
+              dataKey={yAxis} 
+              fill={mainColor} 
+              radius={[6, 6, 0, 0]} 
+              barSize={32} 
+            />
           </BarChart>
         );
       case 'line':
