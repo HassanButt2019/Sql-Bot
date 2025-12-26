@@ -1,18 +1,17 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Message, Conversation, DashboardItem, DashboardReport, LLMModel, DbConnection, TableInfo, DbDialect } from './types';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
-import EnhancedDashboard from './components/EnhancedDashboard';
 import SqlChart from './components/SqlChart';
-import AutoDashboardGenerator from './components/AutoDashboardGenerator';
 import { queryModel } from './services/llmRouter';
-import { regenerateSingleWidget } from './services/autoDashboardService';
-import { introspectDatabase, parseConnectionString, validateConnectionString } from './services/introspectionService';
+import { introspectDatabase } from './services/introspectionService';
 import { 
   SendIcon, 
   TerminalIcon, 
   LayoutDashboardIcon, 
   MessageSquareIcon, 
+  ChevronDownIcon, 
   PinIcon, 
   CheckIcon,
   DatabaseIcon,
@@ -33,12 +32,12 @@ import {
   FileTextIcon,
   Code2Icon,
   BarChart3Icon,
-  Link2Icon,
-  AlertCircleIcon,
+  ShoppingBagIcon,
+  LinkIcon,
+  LockIcon,
   SparklesIcon
 } from 'lucide-react';
 
-// Sub-component for Assistant Response to manage local tab state per message
 const AssistantResponse: React.FC<{
   msg: Message;
   selectedModel: string;
@@ -46,7 +45,6 @@ const AssistantResponse: React.FC<{
   onUpdateScheme: (msgId: string, scheme: string) => void;
 }> = ({ msg, selectedModel, onPin, onUpdateScheme }) => {
   const [activeTab, setActiveTab] = useState<'description' | 'sql' | 'chart'>('description');
-
   const hasSql = !!msg.sql;
   const hasChart = !!(msg.chartConfig && msg.chartData);
 
@@ -58,7 +56,6 @@ const AssistantResponse: React.FC<{
         </div>
         
         <div className="flex-1 space-y-4 min-w-0">
-          {/* Tab Navigation */}
           <div className="flex items-center p-1 bg-slate-100 rounded-2xl w-fit no-print">
             <button 
               onClick={() => setActiveTab('description')}
@@ -85,7 +82,6 @@ const AssistantResponse: React.FC<{
             </button>
           </div>
 
-          {/* Content Area */}
           <div className="relative">
             {activeTab === 'description' && (
               <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm animate-in fade-in slide-in-from-left-2 duration-300">
@@ -129,7 +125,6 @@ const AssistantResponse: React.FC<{
                 </div>
                 <SqlChart
                   {...msg.chartConfig!}
-                  type={msg.chartConfig!.type as 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed'}
                   data={msg.chartData!}
                   onUpdateScheme={(scheme) => onUpdateScheme(msg.id, scheme)}
                 />
@@ -144,78 +139,49 @@ const AssistantResponse: React.FC<{
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'chat' | 'dashboard'>('chat');
-  
-  // Chat State
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
-  
-  // Dashboard State
   const [dashboards, setDashboards] = useState<DashboardReport[]>([]);
   const [currentDashboardId, setCurrentDashboardId] = useState<string | null>(null);
 
-  // Add debugging
-  useEffect(() => {
-    console.log('App component mounted');
-    console.log('Active tab:', activeTab);
-    console.log('Conversations:', conversations);
-    console.log('Dashboards:', dashboards);
-  }, [activeTab, conversations, dashboards]);
-
-  // Connection State
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connections, setConnections] = useState<DbConnection[]>([]);
-  const [useConnectionString, setUseConnectionString] = useState(!!import.meta.env.VITE_DB_CONNECTION_STRING);
+  const [connectionCategory, setConnectionCategory] = useState<'sql' | 'ecommerce'>('sql');
+
   const [connForm, setConnForm] = useState({
-    name: import.meta.env.VITE_DB_NAME || '',
-    host: import.meta.env.VITE_DB_HOST || '',
+    name: '',
+    host: '',
     port: '5432',
-    user: import.meta.env.VITE_DB_USER || '',
-    password: import.meta.env.VITE_DB_PASSWORD || '',
-    database: import.meta.env.VITE_DB_NAME || '',
-    dialect: (import.meta.env.VITE_DB_DIALECT || 'postgresql') as DbDialect,
-    connectionString: import.meta.env.VITE_DB_CONNECTION_STRING || ''
+    user: '',
+    password: '',
+    database: '',
+    dialect: 'postgresql' as DbDialect,
+    shopifyUrl: '',
+    shopifyToken: ''
   });
 
-  // Export State
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [pendingExportMessage, setPendingExportMessage] = useState<Message | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | 'new' | null>(null);
   const [exportDashboardName, setExportDashboardName] = useState('');
 
-  // Auto-Dashboard State
-  const [isAutoDashboardOpen, setIsAutoDashboardOpen] = useState(false);
-
-  // Enhanced Dashboard Mode (toggle between basic and enhanced dashboard)
-  const [useEnhancedDashboard, setUseEnhancedDashboard] = useState(true);
-
-  // UI State
   const [userInput, setUserInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<LLMModel>('gemini-3-pro');
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Settings State
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [openAiApiKey, setOpenAiApiKey] = useState(() => localStorage.getItem('sqlmind_openai_key') || import.meta.env.VITE_OPENAI_API_KEY || '');
-
-  // LLM Model - fixed to GPT-4o
-  const selectedModel: LLMModel = 'gpt-4o';
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Initial Load
   useEffect(() => {
     const savedConv = localStorage.getItem('sqlmind_conversations_v3');
     const savedDashboards = localStorage.getItem('sqlmind_dashboards_v3');
     const savedConnections = localStorage.getItem('sqlmind_connections_v3');
-    
     if (savedConv) setConversations(JSON.parse(savedConv));
     if (savedDashboards) setDashboards(JSON.parse(savedDashboards));
     if (savedConnections) setConnections(JSON.parse(savedConnections));
   }, []);
 
-  // Persistence
   useEffect(() => {
     localStorage.setItem('sqlmind_conversations_v3', JSON.stringify(conversations));
     localStorage.setItem('sqlmind_dashboards_v3', JSON.stringify(dashboards));
@@ -231,115 +197,76 @@ const App: React.FC = () => {
   const currentDashboard = dashboards.find(d => d.id === currentDashboardId);
 
   const handleConnect = async () => {
-    setConnectionError(null);
-    
-    // Validate inputs based on connection mode
-    if (useConnectionString) {
-      const validation = validateConnectionString(connForm.connectionString);
-      if (!validation.valid) {
-        setConnectionError(validation.error || 'Invalid connection string');
-        return;
-      }
-      // Also validate username/password for JDBC URLs that don't include credentials
-      if (!connForm.user || !connForm.password) {
-        setConnectionError('Username and Password are required when using a JDBC connection string');
-        return;
-      }
-    } else {
-      if (!connForm.host || !connForm.database || !connForm.user) {
-        setConnectionError('Please fill in all required fields: Host, Database, and User');
-        return;
-      }
-    }
+    if (connectionCategory === 'sql' && (!connForm.host || !connForm.database)) return;
+    if (connectionCategory === 'ecommerce' && !connForm.shopifyUrl) return;
     
     setIsConnecting(true);
-    
     try {
-      let connectionConfig: any = {
-        dialect: connForm.dialect,
-        password: connForm.password,
-      };
-
-      // If using connection string, parse it to get individual values
-      if (useConnectionString && connForm.connectionString) {
-        const parsed = parseConnectionString(connForm.connectionString, connForm.dialect);
-        connectionConfig = {
-          ...connectionConfig,
-          ...parsed,
-          // Override with form values if provided (for JDBC URLs that don't include credentials)
-          username: connForm.user || parsed.username,
-          password: connForm.password || parsed.password,
-          connectionString: connForm.connectionString,
-          useConnectionString: true,
-        };
-      } else {
-        connectionConfig = {
-          ...connectionConfig,
-          host: connForm.host,
-          port: connForm.port,
-          username: connForm.user,
-          database: connForm.database,
-        };
-      }
-
-      const tables = await introspectDatabase(connectionConfig);
+      const tables = await introspectDatabase({
+        host: connForm.host,
+        database: connForm.database,
+        username: connForm.user,
+        dialect: connectionCategory === 'ecommerce' ? 'shopify' : connForm.dialect,
+        shopifyUrl: connForm.shopifyUrl
+      });
 
       const newConn: DbConnection = {
         id: Date.now().toString(),
-        name: connForm.name || connectionConfig.database,
-        host: connectionConfig.host,
-        port: connectionConfig.port,
-        username: connectionConfig.username,
-        database: connectionConfig.database,
-        dialect: connForm.dialect,
-        connectionString: useConnectionString ? connForm.connectionString : undefined,
-        useConnectionString: useConnectionString,
+        name: connectionCategory === 'ecommerce' ? `Shopify: ${connForm.shopifyUrl.split('.')[0]}` : (connForm.name || connForm.database),
+        host: connForm.host,
+        port: connForm.port,
+        username: connForm.user,
+        database: connForm.database,
+        dialect: connectionCategory === 'ecommerce' ? 'shopify' : connForm.dialect,
         tables: tables,
         isActive: true,
-        status: 'connected'
+        status: 'connected',
+        shopifyUrl: connForm.shopifyUrl,
+        shopifyToken: connForm.shopifyToken
       };
 
-      // Store password securely for SQL execution (needed for queries)
-      localStorage.setItem(`sqlmind_db_password_${newConn.id}`, connectionConfig.password || '');
-
       setConnections(prev => prev.map(c => ({...c, isActive: false})).concat(newConn));
-      setConnForm({ name: '', host: '', port: '5432', user: '', password: '', database: '', dialect: 'postgresql', connectionString: '' });
-      setConnectionError(null);
-    } catch (err: any) {
+      setConnForm({ name: '', host: '', port: '5432', user: '', password: '', database: '', dialect: 'postgresql', shopifyUrl: '', shopifyToken: '' });
+    } catch (err) {
       console.error(err);
-      setConnectionError(err.message || 'Failed to connect to database. Please check your credentials.');
     } finally {
       setIsConnecting(false);
     }
+  };
+
+  const loadShopifySamples = () => {
+    setConnForm(prev => ({
+      ...prev,
+      shopifyUrl: 'mysterious-flowers-88.myshopify.com',
+      shopifyToken: 'shpat_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p'
+    }));
   };
 
   const getFullSchemaContext = () => {
     if (!activeConnection) return "No schema context available.";
     const selected = activeConnection.tables.filter(t => t.selected);
     if (selected.length === 0) return "No tables selected.";
-    return selected.map(t => `TABLE: ${t.name}\nCOLUMNS: ${t.schema}`).join('\n\n');
+    const header = activeConnection.dialect === 'shopify' 
+      ? `SOURCE: Shopify Storefront (${activeConnection.shopifyUrl})\nVIRTUAL SCHEMA:\n`
+      : `SOURCE: SQL Database (${activeConnection.dialect})\nSCHEMA:\n`;
+    return header + selected.map(t => `TABLE: ${t.name}\nCOLUMNS: ${t.schema}`).join('\n\n');
   };
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!userInput.trim() || isTyping || !activeConnection) return;
-    
-    if (!openAiApiKey) {
-      setIsSettingsOpen(true);
-      return;
-    }
 
     let targetId = currentChatId;
     if (!targetId) {
       const id = Date.now().toString();
-      const newConv: Conversation = { id, title: userInput.slice(0, 30) + '...', messages: [], updatedAt: Date.now(), model: 'gpt-4o' };
+      const newConv: Conversation = { id, title: userInput.slice(0, 30) + '...', messages: [], updatedAt: Date.now(), model: selectedModel };
       setConversations([newConv, ...conversations]);
       targetId = id;
       setCurrentChatId(id);
     }
 
     const userMessage: Message = { id: Date.now().toString(), role: 'user', content: userInput, timestamp: Date.now() };
-    const botMessagePlaceholder: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: 'Analyzing schema...', timestamp: Date.now() };
+    const botMessagePlaceholder: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: 'Processing analysis...', timestamp: Date.now() };
 
     setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: [...c.messages, userMessage, botMessagePlaceholder], updatedAt: Date.now() } : c));
     setUserInput('');
@@ -347,14 +274,12 @@ const App: React.FC = () => {
 
     try {
       const schemaContext = getFullSchemaContext();
-      const result = await queryModel(userMessage.content, schemaContext, openAiApiKey, activeConnection || null, (chunkText) => {
+      const result = await queryModel(userMessage.content, schemaContext, selectedModel, (chunkText) => {
         setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, content: chunkText } : m) } : c));
       });
-      
       setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, ...result, content: result.content || "Report generated." } : m) } : c));
-    } catch (error: any) {
+    } catch (error) {
       console.error(error);
-      setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, content: `Error: ${error.message}` } : m) } : c));
     } finally {
       setIsTyping(false);
     }
@@ -365,9 +290,6 @@ const App: React.FC = () => {
   };
 
   const deleteConnection = (id: string) => {
-    // Remove stored password
-    localStorage.removeItem(`sqlmind_db_password_${id}`);
-    
     const newConns = connections.filter(c => c.id !== id);
     if (activeConnection?.id === id && newConns.length > 0) newConns[0].isActive = true;
     setConnections(newConns);
@@ -386,102 +308,13 @@ const App: React.FC = () => {
   };
 
   const updateDashboardItemSize = (itemId: string, size: 4 | 6 | 12) => {
-    setDashboards(prev => prev.map(d => d.id === currentDashboardId ? { 
-      ...d, 
-      items: d.items.map(item => item.id === itemId ? { ...item, colSpan: size } : item),
-      updatedAt: Date.now()
-    } : d));
-  };
-
-  // EnhancedDashboard handlers
-  const updateDashboardItem = (itemId: string, updates: Partial<DashboardItem>) => {
-    setDashboards(prev => prev.map(d => d.id === currentDashboardId ? { 
-      ...d, 
-      items: d.items.map(item => item.id === itemId ? { ...item, ...updates } : item),
-      updatedAt: Date.now()
-    } : d));
-  };
-
-  const updateDashboardLayout = (updatedItems: DashboardItem[]) => {
-    setDashboards(prev => prev.map(d => d.id === currentDashboardId ? { 
-      ...d, 
-      items: updatedItems,
-      updatedAt: Date.now()
-    } : d));
-  };
-
-  const handleRegenerateWidget = async (widgetId: string, sql: string, refinementPrompt?: string): Promise<void> => {
-    if (!activeConnection || !openAiApiKey) return;
-    
-    const widget = currentDashboard?.items.find(i => i.id === widgetId);
-    if (!widget) return;
-
-    // Update widget to loading state
-    updateDashboardItem(widgetId, { isLoading: true, sqlError: undefined });
-
-    try {
-      const schemaContext = getFullSchemaContext();
-      
-      // Convert DashboardItem to AutoDashboardWidget format for regeneration
-      const widgetForRegeneration = {
-        id: widget.id,
-        title: widget.title,
-        sql: widget.sql || sql,
-        explanation: '', // Required by AutoDashboardWidget
-        sqlError: widget.sqlError,
-        chartConfig: {
-          type: widget.chartConfig.type as 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed',
-          xAxis: widget.chartConfig.xAxis,
-          yAxis: widget.chartConfig.yAxis,
-          title: widget.chartConfig.title,
-          colorScheme: widget.chartConfig.colorScheme
-        },
-        chartData: widget.chartData,
-        addedAt: widget.addedAt
-      };
-      
-      const regeneratedWidget = await regenerateSingleWidget(
-        widgetForRegeneration,
-        schemaContext,
-        openAiApiKey,
-        activeConnection,
-        refinementPrompt // Pass refinement prompt to the service
-      );
-
-      updateDashboardItem(widgetId, {
-        chartData: regeneratedWidget.chartData,
-        sql: regeneratedWidget.sql,
-        isLoading: false,
-        sqlError: regeneratedWidget.sqlError,
-        lastRefreshed: Date.now()
-      });
-    } catch (error: any) {
-      updateDashboardItem(widgetId, {
-        isLoading: false,
-        sqlError: error.message || 'Failed to regenerate widget'
-      });
-    }
+    setDashboards(prev => prev.map(d => d.id === currentDashboardId ? { ...d, items: d.items.map(item => item.id === itemId ? { ...item, colSpan: size } : item), updatedAt: Date.now() } : d));
   };
 
   const openExportDialog = (message: Message) => {
     setPendingExportMessage(message);
     setSelectedTargetId(currentDashboardId || (dashboards.length > 0 ? dashboards[0].id : 'new'));
     setIsExportDialogOpen(true);
-  };
-
-  // Auto-Dashboard handler - creates a new dashboard with generated widgets
-  const handleAutoDashboardGenerated = (items: DashboardItem[], title: string) => {
-    const newDashboardId = Date.now().toString();
-    const newDashboard: DashboardReport = {
-      id: newDashboardId,
-      title: title,
-      items: items,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    setDashboards(prev => [newDashboard, ...prev]);
-    setCurrentDashboardId(newDashboardId);
-    setActiveTab('dashboard');
   };
 
   const handleFinalExport = () => {
@@ -493,7 +326,7 @@ const App: React.FC = () => {
       updatedDashboards = [{ id: newId, title: exportDashboardName || 'New Analysis', items: [], createdAt: Date.now(), updatedAt: Date.now() }, ...dashboards];
       targetId = newId;
     }
-    const newItem: DashboardItem = { id: Date.now().toString(), title: pendingExportMessage.chartConfig.title, chartConfig: { ...pendingExportMessage.chartConfig }, chartData: JSON.parse(JSON.stringify(pendingExportMessage.chartData)), addedAt: Date.now(), colSpan: 6, height: 500 };
+    const newItem: DashboardItem = { id: Date.now().toString(), title: pendingExportMessage.chartConfig.title, chartConfig: { ...pendingExportMessage.chartConfig }, chartData: JSON.parse(JSON.stringify(pendingExportMessage.chartData)), addedAt: Date.now(), colSpan: 6, height: 350 };
     updatedDashboards = updatedDashboards.map(d => d.id === targetId ? { ...d, items: [newItem, ...d.items], updatedAt: Date.now() } : d);
     setDashboards(updatedDashboards);
     setIsExportDialogOpen(false);
@@ -528,35 +361,26 @@ const App: React.FC = () => {
 
           <div className="flex items-center gap-3">
             {activeTab === 'chat' && (
-              <>
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-black uppercase tracking-widest">
-                  <CpuIcon className="w-4 h-4 text-green-500" />
-                  GPT-4o
-                </div>
-                <button 
-                  onClick={() => setIsSettingsOpen(true)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${openAiApiKey ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}
-                >
-                  <SettingsIcon className="w-3.5 h-3.5" />
-                  {openAiApiKey ? 'API Key Set' : 'Set API Key'}
+              <div className="relative group">
+                <button className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-slate-50">
+                  <CpuIcon className={`w-4 h-4 text-blue-500`} />
+                  {selectedModel.replace('-', ' ')}
+                  <ChevronDownIcon className="w-3.5 h-3.5 opacity-40" />
                 </button>
-              </>
-            )}
-            {activeTab === 'dashboard' && (
-              <button 
-                onClick={() => setIsAutoDashboardOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:from-violet-700 hover:to-indigo-700 shadow-lg shadow-violet-500/20"
-              >
-                <SparklesIcon className="w-3.5 h-3.5" />
-                Auto-Generate Dashboard
-              </button>
+                <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all overflow-hidden z-50">
+                   {['gemini-3-pro', 'gemini-3-flash', 'claude-3-5', 'gpt-4o'].map(m => (
+                     <button key={m} onClick={() => setSelectedModel(m as LLMModel)} className="w-full text-left px-4 py-3 hover:bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-700">{m}</button>
+                   ))}
+                </div>
+              </div>
             )}
             <button 
               onClick={() => setIsDbModalOpen(true)}
               className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:bg-black shadow-lg shadow-slate-900/10"
             >
-              <DatabaseIcon className={`w-3.5 h-3.5 ${activeConnection ? 'text-green-400' : 'text-slate-400'}`} />
-              <span className="max-w-[120px] truncate">{activeConnection ? activeConnection.database : 'Connect DB'}</span>
+              {activeConnection?.dialect === 'shopify' ? <ShoppingBagIcon className="w-3.5 h-3.5 text-green-400" /> : <DatabaseIcon className={`w-3.5 h-3.5 ${activeConnection ? 'text-green-400' : 'text-slate-400'}`} />}
+              <span className="max-w-[120px] truncate">{activeConnection ? (activeConnection.dialect === 'shopify' ? activeConnection.shopifyUrl : activeConnection.database) : 'Connect Source'}</span>
+              <SettingsIcon className="w-3.5 h-3.5 ml-1 opacity-40" />
             </button>
           </div>
         </header>
@@ -571,14 +395,14 @@ const App: React.FC = () => {
                       <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-[2.5rem] flex items-center justify-center mb-8 shadow-xl">
                         <DatabaseZapIcon className="w-10 h-10" />
                       </div>
-                      <h2 className="text-4xl font-black text-slate-900 mb-4 tracking-tighter">AI Data Studio</h2>
+                      <h2 className="text-4xl font-black text-slate-900 mb-4 tracking-tighter">Unified Data Studio</h2>
                       <p className="text-slate-500 max-w-md mb-8 text-lg font-medium leading-relaxed">
-                        Query your organization's data using plain English. Get instant visualizations.
+                        Analyze Shopify stores or SQL databases in plain English. Automated charting for e-commerce and finance.
                       </p>
                       {!activeConnection && (
                         <button onClick={() => setIsDbModalOpen(true)} className="px-8 py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center gap-3 hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20">
                           <PlusIcon className="w-5 h-5" />
-                          Set Up Connection First
+                          Connect a Source
                         </button>
                       )}
                     </div>
@@ -611,7 +435,7 @@ const App: React.FC = () => {
                     type="text"
                     value={userInput}
                     onChange={(e) => setUserInput(e.target.value)}
-                    placeholder={activeConnection ? `Ask ${activeConnection.database}...` : "Please connect to a database first..."}
+                    placeholder={activeConnection ? `Analyze ${activeConnection.name}...` : "Connect to a source first..."}
                     disabled={!activeConnection}
                     className="w-full pl-6 pr-16 py-4 bg-slate-50 border border-slate-200 rounded-[2rem] focus:outline-none focus:ring-8 focus:ring-blue-500/5 focus:border-blue-500 focus:bg-white transition-all font-bold text-lg"
                   />
@@ -623,41 +447,25 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="h-full overflow-y-auto dashboard-scroll-container">
-              {useEnhancedDashboard ? (
-                <EnhancedDashboard
-                  dashboard={currentDashboard || null}
-                  items={currentDashboard?.items || []}
-                  title={currentDashboard?.title}
-                  onRemove={removeFromDashboard}
-                  onUpdateItem={updateDashboardItem}
-                  onUpdateLayout={updateDashboardLayout}
-                  onRegenerateWidget={handleRegenerateWidget}
-                  onUpdateItemScheme={updateDashboardItemColorScheme}
-                  dbConnection={activeConnection || null}
-                  schemaContext={getFullSchemaContext()} // <-- Always pass valid, non-empty schemaContext
-                />
-              ) : (
-                <Dashboard 
-                  items={currentDashboard?.items || []} 
-                  title={currentDashboard?.title}
-                  dashboardId={currentDashboard?.id}
-                  onRemove={removeFromDashboard} 
-                  onUpdateItemScheme={updateDashboardItemColorScheme} 
-                />
-              )}
+              <Dashboard 
+                items={currentDashboard?.items || []} 
+                title={currentDashboard?.title} 
+                onRemove={removeFromDashboard} 
+                onUpdateSize={updateDashboardItemSize} 
+                onUpdateItemScheme={updateDashboardItemColorScheme} 
+              />
             </div>
           )}
         </main>
       </div>
 
-      {/* Connection Modal */}
       {isDbModalOpen && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-6xl rounded-[3rem] shadow-2xl border border-slate-200 overflow-hidden flex h-[85vh] animate-in zoom-in-95">
             <div className="w-[300px] bg-slate-50 border-r border-slate-200 p-8 flex flex-col shrink-0">
                <div className="flex items-center gap-3 mb-8">
-                  <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white"><ServerIcon className="w-4 h-4" /></div>
-                  <h3 className="font-black text-lg tracking-tight">Saved Sources</h3>
+                  <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white font-bold">M</div>
+                  <h3 className="font-black text-lg tracking-tight">Active Nodes</h3>
                </div>
                <div className="flex-1 space-y-3 overflow-y-auto pr-2 custom-scrollbar">
                  {connections.map(c => (
@@ -666,7 +474,7 @@ const App: React.FC = () => {
                         <span className="font-bold text-sm truncate">{c.name}</span>
                         {c.isActive && <CheckIcon className="w-4 h-4" />}
                       </div>
-                      <p className={`text-[10px] truncate opacity-60 font-mono`}>{c.host}</p>
+                      <p className="text-[10px] truncate opacity-60 font-mono">{c.dialect === 'shopify' ? c.shopifyUrl : c.host}</p>
                       <div className="mt-3 flex items-center justify-between">
                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest ${c.isActive ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{c.dialect}</span>
                          <button onClick={(e) => { e.stopPropagation(); deleteConnection(c.id); }} className="p-1 hover:text-red-500"><Trash2Icon className="w-3 h-3" /></button>
@@ -678,126 +486,83 @@ const App: React.FC = () => {
 
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
                <div className="flex items-center justify-between p-10 pb-4 shrink-0">
-                  <div>
+                  <div className="flex flex-col gap-1">
                     <h3 className="text-3xl font-black text-slate-900 tracking-tighter">Connection Manager</h3>
-                    <p className="text-slate-500 font-medium italic">Configure credentials & Select tables for analysis</p>
+                    <nav className="flex gap-4 mt-2">
+                       <button onClick={() => setConnectionCategory('sql')} className={`text-xs font-bold transition-all ${connectionCategory === 'sql' ? 'text-blue-600 border-b-2 border-blue-600 pb-1' : 'text-slate-400 hover:text-slate-600'}`}>DATABASES</button>
+                       <button onClick={() => setConnectionCategory('ecommerce')} className={`text-xs font-bold transition-all ${connectionCategory === 'ecommerce' ? 'text-green-600 border-b-2 border-green-600 pb-1' : 'text-slate-400 hover:text-slate-600'}`}>E-COMMERCE</button>
+                    </nav>
                   </div>
                   <button onClick={() => setIsDbModalOpen(false)} className="p-3 hover:bg-slate-100 rounded-2xl text-slate-400"><XIcon /></button>
                </div>
 
                <div className="flex-1 overflow-y-auto p-10 grid grid-cols-2 gap-12">
                   <div className="space-y-6">
-                     <div className="p-6 bg-slate-50 border border-slate-100 rounded-3xl space-y-4">
-                        <div className="flex items-center justify-between mb-2">
-                           <div className="flex items-center gap-3">
-                              <GlobeIcon className="w-4 h-4 text-blue-500" />
-                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-900">Database Credentials</span>
-                           </div>
-                           {/* Connection String Toggle */}
-                           <button 
-                              onClick={() => setUseConnectionString(!useConnectionString)}
-                              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${useConnectionString ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-500 hover:border-blue-300'}`}
-                           >
-                              <Link2Icon className="w-3 h-3" />
-                              {useConnectionString ? 'Using URL' : 'Use URL'}
-                           </button>
-                        </div>
-                        
-                        {/* Connection String Input */}
-                        {useConnectionString ? (
-                           <div className="space-y-4">
-                              <div>
-                                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Connection String / JDBC URL</label>
-                                 <input 
-                                    value={connForm.connectionString} 
-                                    onChange={e => setConnForm({...connForm, connectionString: e.target.value})} 
-                                    placeholder="jdbc:postgresql://host:5432/database?sslmode=require" 
-                                    className="w-full p-3 rounded-xl border text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-                                 />
-                                 <p className="text-[10px] text-slate-400 mt-2">Supports: jdbc:postgresql://host:port/database or postgresql://host:port/database</p>
-                              </div>
-                              <div className="grid grid-cols-2 gap-4">
-                                 <div>
-                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Username *</label>
-                                    <input 
-                                       value={connForm.user} 
-                                       onChange={e => setConnForm({...connForm, user: e.target.value})} 
-                                       placeholder="Database username" 
-                                       className="w-full p-3 rounded-xl border text-sm font-semibold" 
-                                    />
-                                 </div>
-                                 <div>
-                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 block">Password *</label>
-                                    <input 
-                                       type="password" 
-                                       value={connForm.password} 
-                                       onChange={e => setConnForm({...connForm, password: e.target.value})} 
-                                       placeholder="Database password" 
-                                       className="w-full p-3 rounded-xl border text-sm font-semibold" 
-                                    />
-                                 </div>
-                              </div>
-                              <input 
-                                 value={connForm.name} 
-                                 onChange={e => setConnForm({...connForm, name: e.target.value})} 
-                                 placeholder="Connection Name (optional)" 
-                                 className="w-full p-3 rounded-xl border text-sm font-semibold" 
-                              />
-                              <select value={connForm.dialect} onChange={e => setConnForm({...connForm, dialect: e.target.value as DbDialect})} className="w-full p-3 rounded-xl border text-sm font-semibold bg-white">
-                                 <option value="postgresql">PostgreSQL</option>
-                                 <option value="mysql">MySQL</option>
-                                 <option value="sqlserver">SQL Server</option>
-                                 <option value="sqlite">SQLite</option>
-                              </select>
-                           </div>
+                     <div className="p-8 bg-slate-50 border border-slate-100 rounded-[2.5rem] space-y-5 shadow-inner">
+                        {connectionCategory === 'sql' ? (
+                          <>
+                            <div className="flex items-center gap-3 mb-2">
+                               <GlobeIcon className="w-4 h-4 text-blue-500" />
+                               <span className="text-[10px] font-black uppercase tracking-widest text-slate-900">SQL Credentials</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                               <input value={connForm.host} onChange={e => setConnForm({...connForm, host: e.target.value})} placeholder="Host" className="w-full p-3 rounded-xl border text-sm font-semibold focus:ring-2 focus:ring-blue-500/10" />
+                               <input value={connForm.port} onChange={e => setConnForm({...connForm, port: e.target.value})} placeholder="Port" className="w-full p-3 rounded-xl border text-sm font-semibold focus:ring-2 focus:ring-blue-500/10" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                               <input value={connForm.user} onChange={e => setConnForm({...connForm, user: e.target.value})} placeholder="User" className="w-full p-3 rounded-xl border text-sm font-semibold focus:ring-2 focus:ring-blue-500/10" />
+                               <input type="password" value={connForm.password} onChange={e => setConnForm({...connForm, password: e.target.value})} placeholder="Password" className="w-full p-3 rounded-xl border text-sm font-semibold focus:ring-2 focus:ring-blue-500/10" />
+                            </div>
+                            <input value={connForm.database} onChange={e => setConnForm({...connForm, database: e.target.value})} placeholder="Database Name" className="w-full p-3 rounded-xl border text-sm font-semibold focus:ring-2 focus:ring-blue-500/10" />
+                            <select value={connForm.dialect} onChange={e => setConnForm({...connForm, dialect: e.target.value as DbDialect})} className="w-full p-3 rounded-xl border text-sm font-semibold bg-white cursor-pointer">
+                               <option value="postgresql">PostgreSQL</option>
+                               <option value="mysql">MySQL</option>
+                               <option value="sqlite">SQLite</option>
+                            </select>
+                          </>
                         ) : (
-                           <>
-                              <div className="grid grid-cols-2 gap-4">
-                                 <input value={connForm.host} onChange={e => setConnForm({...connForm, host: e.target.value})} placeholder="Host" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                                 <input value={connForm.port} onChange={e => setConnForm({...connForm, port: e.target.value})} placeholder="Port" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                              </div>
-                              <div className="grid grid-cols-2 gap-4">
-                                 <input value={connForm.user} onChange={e => setConnForm({...connForm, user: e.target.value})} placeholder="User" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                                 <input type="password" value={connForm.password} onChange={e => setConnForm({...connForm, password: e.target.value})} placeholder="Password" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                              </div>
-                              <input value={connForm.database} onChange={e => setConnForm({...connForm, database: e.target.value})} placeholder="Database Name" className="w-full p-3 rounded-xl border text-sm font-semibold" />
-                              <select value={connForm.dialect} onChange={e => setConnForm({...connForm, dialect: e.target.value as DbDialect})} className="w-full p-3 rounded-xl border text-sm font-semibold bg-white">
-                                 <option value="postgresql">PostgreSQL</option>
-                                 <option value="mysql">MySQL</option>
-                                 <option value="sqlserver">SQL Server</option>
-                                 <option value="sqlite">SQLite</option>
-                              </select>
-                           </>
+                          <>
+                            <div className="flex items-center justify-between mb-2">
+                               <div className="flex items-center gap-3">
+                                 <ShoppingBagIcon className="w-4 h-4 text-green-500" />
+                                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-900">Shopify Integration</span>
+                               </div>
+                               <button 
+                                 onClick={loadShopifySamples}
+                                 className="flex items-center gap-1.5 px-3 py-1 bg-green-100 text-green-700 text-[9px] font-black uppercase tracking-widest rounded-lg hover:bg-green-200 transition-colors"
+                               >
+                                 <SparklesIcon className="w-3 h-3" />
+                                 Load Sample Credentials
+                               </button>
+                            </div>
+                            <div className="space-y-4">
+                               <div className="relative">
+                                  <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                                  <input value={connForm.shopifyUrl} onChange={e => setConnForm({...connForm, shopifyUrl: e.target.value})} placeholder="your-store.myshopify.com" className="w-full pl-10 pr-4 py-3 rounded-xl border text-sm font-semibold focus:ring-2 focus:ring-green-500/10" />
+                               </div>
+                               <div className="relative">
+                                  <LockIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                                  <input type="password" value={connForm.shopifyToken} onChange={e => setConnForm({...connForm, shopifyToken: e.target.value})} placeholder="Admin API Access Token (shpat_...)" className="w-full pl-10 pr-4 py-3 rounded-xl border text-sm font-semibold focus:ring-2 focus:ring-green-500/10" />
+                               </div>
+                            </div>
+                            <div className="bg-green-50 border border-green-100 p-4 rounded-2xl">
+                               <p className="text-[10px] font-bold text-green-700 leading-tight">Virtual mapping will create virtual SQL tables for your store's Orders, Products, and Customers.</p>
+                            </div>
+                          </>
                         )}
-                        
-                        {/* Error Message */}
-                        {connectionError && (
-                           <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-100 rounded-2xl">
-                              <AlertCircleIcon className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-                              <div>
-                                 <p className="text-sm font-bold text-red-700">Connection Failed</p>
-                                 <p className="text-xs text-red-600 mt-1">{connectionError}</p>
-                              </div>
-                           </div>
-                        )}
-                        
-                        <button onClick={handleConnect} disabled={isConnecting} className="w-full py-4 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl flex items-center justify-center gap-2 disabled:opacity-50">
-                           {isConnecting ? <><Loader2Icon className="w-4 h-4 animate-spin" /> Connecting...</> : <><ArrowRightIcon className="w-4 h-4" /> Connect & Introspect</>}
+                        <button onClick={handleConnect} disabled={isConnecting} className={`w-full py-4 ${connectionCategory === 'ecommerce' ? 'bg-green-600 hover:bg-green-700' : 'bg-slate-900 hover:bg-black'} text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2`}>
+                           {isConnecting ? <><Loader2Icon className="w-4 h-4 animate-spin" /> VERIFYING...</> : <><ArrowRightIcon className="w-4 h-4" /> INITIALIZE NODE</>}
                         </button>
-                     </div>
-                     <div className="p-6 bg-slate-950 rounded-3xl text-white space-y-3">
-                        <div className="flex items-center gap-3">
-                           <ShieldCheckIcon className="w-4 h-4 text-green-400" />
-                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Security Note</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 leading-relaxed">Schema extraction is performed locally. Data records are NOT sent to the AI, only metadata.</p>
                      </div>
                   </div>
 
                   <div className="flex flex-col min-h-0">
-                     <div className="mb-6">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Schema Discovery</span>
-                        <h4 className="text-xl font-black text-slate-900 tracking-tight">{activeConnection?.database || 'No Schema Found'}</h4>
+                     <div className="mb-6 flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Schema Discovery</span>
+                          <h4 className="text-xl font-black text-slate-900 tracking-tight">{activeConnection?.dialect === 'shopify' ? 'Shopify API Objects' : (activeConnection?.database || 'Pending Node')}</h4>
+                        </div>
+                        {activeConnection?.dialect === 'shopify' && <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-[10px] font-black">VIRTUAL SCHEMA</span>}
                      </div>
                      <div className="flex-1 overflow-y-auto space-y-3 pr-4 custom-scrollbar">
                         {activeConnection?.tables.map(table => (
@@ -810,7 +575,7 @@ const App: React.FC = () => {
                              <p className="text-[10px] text-slate-400 font-mono truncate">{table.schema}</p>
                           </div>
                         ))}
-                        {!activeConnection && <div className="h-full flex items-center justify-center text-slate-400 italic text-sm text-center">Tables will appear here<br/>after connection.</div>}
+                        {!activeConnection && <div className="h-full flex items-center justify-center text-slate-400 italic text-sm text-center">Connection schema will<br/>auto-populate here.</div>}
                      </div>
                   </div>
                </div>
@@ -819,14 +584,13 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Export Dialog */}
       {isExportDialogOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 no-print">
           <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in zoom-in-95 duration-200">
              <div className="flex justify-between items-start mb-6">
                 <div>
-                   <h3 className="text-2xl font-black tracking-tight">Export Widget</h3>
-                   <p className="text-sm text-slate-500">Pick destination dashboard</p>
+                   <h3 className="text-2xl font-black tracking-tight">Export View</h3>
+                   <p className="text-sm text-slate-500">Choose destination report</p>
                 </div>
                 <button onClick={() => setIsExportDialogOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors"><XIcon className="w-5 h-5 text-slate-400" /></button>
              </div>
@@ -837,67 +601,17 @@ const App: React.FC = () => {
                    {selectedTargetId === d.id && <CheckIcon className="w-4 h-4" />}
                  </button>
                ))}
-               <button onClick={() => setSelectedTargetId('new')} className={`w-full p-4 rounded-2xl border border-dashed text-left transition-all ${selectedTargetId === 'new' ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'text-slate-400 border-slate-300 hover:border-blue-400 hover:text-blue-600'}`}>+ Create New Dashboard</button>
+               <button onClick={() => setSelectedTargetId('new')} className={`w-full p-4 rounded-2xl border border-dashed text-left transition-all ${selectedTargetId === 'new' ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'text-slate-400 border-slate-300 hover:border-blue-400 hover:text-blue-600'}`}>+ New Analytics Report</button>
              </div>
              {selectedTargetId === 'new' && (
                <div className="mb-6 animate-in slide-in-from-top-2">
-                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block px-1">Dashboard Title</label>
-                 <input value={exportDashboardName} onChange={e => setExportDashboardName(e.target.value)} placeholder="Enter name..." className="w-full p-4 rounded-2xl border font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500" />
+                 <input value={exportDashboardName} onChange={e => setExportDashboardName(e.target.value)} placeholder="Report name..." className="w-full p-4 rounded-2xl border font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500" />
                </div>
              )}
-             <button onClick={handleFinalExport} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-black transition-all active:scale-95 shadow-xl shadow-slate-900/10">Export to Analysis</button>
+             <button onClick={handleFinalExport} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-black transition-all active:scale-95 shadow-xl shadow-slate-900/10">COMMIT TO DASHBOARD</button>
           </div>
         </div>
       )}
-
-      {/* Settings Modal */}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 no-print">
-          <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-             <div className="flex justify-between items-start mb-6">
-                <div>
-                   <h3 className="text-2xl font-black tracking-tight">Settings</h3>
-                   <p className="text-sm text-slate-500">Configure your API keys</p>
-                </div>
-                <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors"><XIcon className="w-5 h-5 text-slate-400" /></button>
-             </div>
-             
-             <div className="space-y-6">
-               <div>
-                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block px-1">OpenAI API Key</label>
-                 <input 
-                   type="password"
-                   value={openAiApiKey} 
-                   onChange={e => setOpenAiApiKey(e.target.value)} 
-                   placeholder="sk-..." 
-                   className="w-full p-4 rounded-2xl border font-mono text-sm focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500" 
-                 />
-                 <p className="text-xs text-slate-400 mt-2 px-1">Your API key is stored locally and never sent to our servers.</p>
-               </div>
-               
-               <button 
-                 onClick={() => {
-                   localStorage.setItem('sqlmind_openai_key', openAiApiKey);
-                   setIsSettingsOpen(false);
-                 }} 
-                 className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-black transition-all active:scale-95 shadow-xl shadow-slate-900/10"
-               >
-                 Save Settings
-               </button>
-             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Auto-Dashboard Generator Modal */}
-      <AutoDashboardGenerator
-        isOpen={isAutoDashboardOpen}
-        onClose={() => setIsAutoDashboardOpen(false)}
-        onDashboardGenerated={handleAutoDashboardGenerated}
-        dbConnection={activeConnection || null}
-        schemaContext={getFullSchemaContext()}
-        apiKey={openAiApiKey}
-      />
     </div>
   );
 };

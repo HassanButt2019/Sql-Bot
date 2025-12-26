@@ -1,7 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { Message } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+// Standard initialization of Google GenAI as per current best practices
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export async function generateSqlQueryStream(
   prompt: string, 
@@ -9,72 +10,66 @@ export async function generateSqlQueryStream(
   model: string = 'gemini-3-pro-preview',
   onChunk: (text: string) => void
 ): Promise<Partial<Message>> {
+  // Use generateContentStream to provide progress feedback while the model reasons about financial data
   const responseStream = await ai.models.generateContentStream({
     model: model,
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: prompt,
     config: {
-      systemInstruction: `You are a world-class Data Analyst and Visualization Expert.
-    Given the database schema provided below, translate the user's natural language question into a valid SQL query and a high-impact JSON visualization config.
+      systemInstruction: `You are a world-class Financial Data Analyst and Compliance Officer.
+    Given the database schema below, provide a valid SQL query and an interactive analysis.
     
     SCHEMA CONTEXT:
     ${schemaContext}
 
-    VISUALIZATION RULES:
-    1. Select the most effective chart type:
-       - 'bar': For simple categorical comparisons.
-       - 'line': For continuous time-series data.
-       - 'area': For visualizing volume or totals over time.
-       - 'pie': For part-to-whole relationships (limit to 6 segments).
-       - 'radar': For comparing 3+ metrics across categories.
-       - 'scatter': For correlation between two numeric variables.
-       - 'composed': For comparing a value (bar) against a trend or target (line).
+    FINANCIAL INTELLIGENCE RULES:
+    1. If the data contains time-series information, suggest a 'forecastData' series based on trends.
+    2. Explicitly look for 'anomalies' (values that are > 2 std dev from mean or suspicious spikes).
+    3. Choose 'colorScheme' based on risk: 'alert' for high-risk findings, 'trust' for audits, 'growth' for sales.
+    4. PII MASKING: Never mention specific names or account IDs in the 'explanation'. Refer to them by category or trend.
 
-    2. Choose a meaningful 'colorScheme' based on the context of the data:
-       - 'trust': Professional blues/grays (Corporate reporting, security, stable metrics).
-       - 'growth': Greens (Revenue increase, sales growth, positive trends).
-       - 'performance': Green/Yellow/Red (KPI tracking, performance metrics).
-       - 'categorical': Diverse high-contrast colors (Regional breakdown, product types).
-       - 'warm': Reds/Oranges (Urgent alerts, heatmaps, high activity).
-       - 'cool': Cyans/Indigos (Technical data, baseline metrics).
-       - 'alert': High-saturation Reds (Risk detection, stock shortages, critical errors).
-       - 'default': Clean standard aesthetic.
+    OUTPUT FORMAT (Raw JSON):
+    - sql: The SQL query.
+    - explanation: Narrative summary for executive stakeholders.
+    - anomalies: Array of strings describing specific outlier points found.
+    - chartConfig: { type, xAxis, yAxis, title, colorScheme }
+    - chartData: Result set array.
+    - forecastData: (Optional) Array for predicted future points.
 
-    Your response MUST be in valid JSON format with these keys:
-    - sql: The generated SQL query string.
-    - explanation: A concise textual explanation of the data findings.
-    - chartConfig: { type, xAxis, yAxis, yAxisSecondary?, title, colorScheme }
-    - chartData: An array of objects representing the result set (keys match xAxis/yAxis).
-
-    IMPORTANT: Do not wrap the JSON in markdown blocks. Return the raw JSON string.`,
+    Return only the JSON string.`,
       responseMimeType: "application/json"
     }
   });
 
   let fullText = "";
   try {
+    // Collect the full response text while notifying the UI of background progress
     for await (const chunk of responseStream) {
-      const text = chunk.text;
-      fullText += text;
-      onChunk("Synthesizing insights..."); 
+      fullText += chunk.text;
+      onChunk("Running compliance checks..."); 
     }
   } catch (err) {
-    console.error("Streaming error:", err);
-    return { content: "I encountered a streaming error while communicating with the AI." };
+    console.error("Stream generation failed:", err);
+    return { content: "Critical connection error during analysis." };
   }
 
   try {
-    // Clean potential markdown wrapping if the model ignored instructions
+    // Sanitize the response text to ensure clean JSON parsing
     const jsonStr = fullText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
     const data = JSON.parse(jsonStr || '{}');
+    
+    // Map extracted JSON fields to the Message interface, ensuring all financial analysis fields are handled correctly
+    // Fixed: anomalies and forecastData are now known properties of Partial<Message>
     return {
       sql: data.sql,
       explanation: data.explanation,
+      anomalies: Array.isArray(data.anomalies) ? data.anomalies : [],
       chartConfig: data.chartConfig,
-      chartData: data.chartData,
+      chartData: Array.isArray(data.chartData) ? data.chartData : [],
+      forecastData: Array.isArray(data.forecastData) ? data.forecastData : [],
       content: data.explanation || "Analysis complete."
     };
   } catch (error) {
-    console.error("Failed to parse Gemini response", error, fullText);
-    return { content: "I encountered an error processing the structured data response." };
+    console.error("Failed to parse analysis JSON:", error);
+    return { content: "Error: Could not parse structured financial data." };
   }
 }

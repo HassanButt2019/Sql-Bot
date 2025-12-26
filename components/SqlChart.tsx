@@ -8,7 +8,6 @@ import {
 import { PaletteIcon, CheckIcon, ChevronDownIcon } from 'lucide-react';
 
 interface SqlChartProps {
-  id?: string;
   type: 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed';
   data: any[];
   xAxis: string;
@@ -87,12 +86,9 @@ const CustomTooltip = ({ active, payload, label, xAxisName, yAxisName, type }: a
 };
 
 const SqlChart: React.FC<SqlChartProps> = ({ 
-  id, type, data, xAxis, yAxis, yAxisSecondary, title, colorScheme = 'default', customColors, height = 400, onUpdateScheme
+  type, data, xAxis, yAxis, yAxisSecondary, title, colorScheme = 'default', customColors, height = 350, onUpdateScheme
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  
-  // Use provided height, with a reasonable minimum
-  const chartHeight = Math.max(200, height);
 
   if (!data || data.length === 0) {
     return (
@@ -128,12 +124,7 @@ const SqlChart: React.FC<SqlChartProps> = ({
               content={<CustomTooltip {...tooltipCommonProps} />} 
               isAnimationActive={false}
             />
-            <Bar 
-              dataKey={yAxis} 
-              fill={mainColor} 
-              radius={[6, 6, 0, 0]} 
-              barSize={32} 
-            />
+            <Bar dataKey={yAxis} fill={mainColor} radius={[6, 6, 0, 0]} barSize={32} />
           </BarChart>
         );
       case 'line':
@@ -256,25 +247,25 @@ const SqlChart: React.FC<SqlChartProps> = ({
   };
 
   return (
-    <div id={id ? `chart-${id}` : undefined} className="w-full overflow-hidden">
-      <div className="flex items-center justify-between mb-2 px-1">
+    <div className="w-full bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden group/chart relative">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h3 className="text-[9px] font-black text-slate-400 tracking-widest uppercase mb-0.5">{title}</h3>
-          <div className="flex items-center gap-1.5">
+          <h3 className="text-[10px] font-black text-slate-400 tracking-widest uppercase mb-1">{title}</h3>
+          <div className="flex items-center gap-2">
             <div className={`w-1.5 h-1.5 rounded-full ${type === 'pie' ? 'bg-indigo-500' : 'bg-blue-500'} animate-pulse`} />
-            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-tight">Live Intelligence Analysis</p>
+            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-tighter">Live Intelligence Analysis</p>
           </div>
         </div>
       </div>
 
-      <div style={{ width: '100%', height: chartHeight }}>
+      <div style={{ width: '100%', height: height }}>
         <ResponsiveContainer width="100%" height="100%">
           {renderChart() || <div>Chart type not supported</div>}
         </ResponsiveContainer>
       </div>
 
       {onUpdateScheme && (
-        <div className="mt-2 pt-2 border-t border-slate-50 flex items-center justify-between no-print">
+        <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between no-print">
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-slate-200" />
             <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">Visual Palette</span>
