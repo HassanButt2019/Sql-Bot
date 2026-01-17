@@ -18,6 +18,7 @@ import HeatmapChart from './HeatmapChart';
 import GeoMap from './GeoMap';
 import ThemeCustomizer from './ThemeCustomizer';
 import ReportGenerator from './ReportGenerator';
+import DashboardChat from './DashboardChat';
 import { 
   Trash2Icon, 
   LayoutGridIcon, 
@@ -33,6 +34,7 @@ import {
   TrendingUpIcon,
   TrendingDownIcon,
   MinusIcon,
+  CalendarIcon,
   LightbulbIcon,
   XIcon,
   MessageSquareIcon,
@@ -53,7 +55,9 @@ interface EnhancedDashboardProps {
   onUpdateLayout: (items: DashboardItem[]) => void;
   onRegenerateWidget: (widgetId: string, sql: string, refinementPrompt?: string) => Promise<void>;
   onUpdateItemScheme?: (id: string, scheme: string) => void;
+  onAddItems: (items: DashboardItem[]) => void;
   dbConnection: DbConnection | null;
+  apiKey: string;
   isEmbedMode?: boolean;
   schemaContext: string; // <-- Explicitly require schemaContext as a prop
 }
@@ -77,7 +81,9 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
   onUpdateLayout,
   onRegenerateWidget,
   onUpdateItemScheme,
+  onAddItems,
   dbConnection,
+  apiKey,
   isEmbedMode = false,
   schemaContext // <-- Use schemaContext from props
 }) => {
@@ -88,6 +94,8 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
   const [regeneratingWidgets, setRegeneratingWidgets] = useState<Set<string>>(new Set());
   const [showSqlModal, setShowSqlModal] = useState<{ widgetId: string; sql: string; suggestions: string[] } | null>(null);
   const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [showBucketFor, setShowBucketFor] = useState<string | null>(null);
   
   // Refinement state for failed widgets
   const [refinementInputs, setRefinementInputs] = useState<Record<string, string>>({});
@@ -138,6 +146,13 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
         return next;
       });
     }
+  };
+
+  const handleTimeBucket = (item: DashboardItem, bucket: 'day' | 'week' | 'month' | 'quarter' | 'year') => {
+    if (!item.sql) return;
+    const prompt = `Bucket time by ${bucket} using DATE_TRUNC on ${item.chartConfig.xAxis}.`;
+    handleRegenerate(item.id, item.sql, prompt);
+    setShowBucketFor(null);
   };
 
   // Get comparative analysis for a widget
@@ -482,6 +497,15 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
               <span>Report</span>
             </button>
 
+            {/* Dashboard Chat */}
+            <button
+              onClick={() => setIsChatOpen(true)}
+              className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20"
+            >
+              <MessageSquareIcon className="w-4 h-4" />
+              <span>Chat</span>
+            </button>
+
             {/* Share Button */}
             <button 
               onClick={handleShare}
@@ -577,6 +601,30 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
                       >
                         <GitCompareIcon className="w-4 h-4" />
                       </button>
+                    )}
+                    {(item.chartConfig.type === 'line' || item.chartConfig.type === 'area') && item.sql && (
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowBucketFor(showBucketFor === item.id ? null : item.id)}
+                          title="Time Bucket"
+                          className="p-2 bg-white/90 hover:bg-white text-slate-500 hover:text-slate-700 rounded-lg shadow-sm border border-slate-200 transition-all"
+                        >
+                          <CalendarIcon className="w-4 h-4" />
+                        </button>
+                        {showBucketFor === item.id && (
+                          <div className="absolute right-0 top-10 z-50 w-36 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden">
+                            {(['day', 'week', 'month', 'quarter', 'year'] as const).map(bucket => (
+                              <button
+                                key={bucket}
+                                onClick={() => handleTimeBucket(item, bucket)}
+                                className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                              >
+                                {bucket.charAt(0).toUpperCase() + bucket.slice(1)}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                     {item.sql && (
                       <button
@@ -859,6 +907,17 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
         onClose={() => setIsReportModalOpen(false)}
         dashboard={currentDashboard}
         items={items}
+      />
+
+      {/* Dashboard Chat */}
+      <DashboardChat
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        apiKey={apiKey}
+        dbConnection={dbConnection}
+        schemaContext={schemaContext}
+        dashboardItems={items}
+        onAddItems={onAddItems}
       />
     </div>
   );

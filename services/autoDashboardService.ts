@@ -78,6 +78,38 @@ export const DASHBOARD_PRESETS: AutoDashboardPreset[] = [
     category: 'operations'
   },
   {
+    id: 'ap-ar-aging',
+    name: 'AP/AR Aging',
+    description: 'Payables and receivables aging buckets',
+    prompt: 'Create a finance ops dashboard with AP aging by vendor, AR aging by customer, overdue balances, and aging trends over time',
+    icon: '🧾',
+    category: 'finance'
+  },
+  {
+    id: 'cash-conversion',
+    name: 'Cash Conversion Cycle',
+    description: 'CCC drivers and cash velocity',
+    prompt: 'Create a dashboard for cash conversion cycle with days sales outstanding, days payable outstanding, days inventory on hand, and overall CCC trend',
+    icon: '💸',
+    category: 'finance'
+  },
+  {
+    id: 'vendor-concentration',
+    name: 'Vendor Concentration',
+    description: 'Top vendors and spend concentration risk',
+    prompt: 'Create a vendor concentration dashboard showing top vendors by spend, percentage share, and spend trend over time',
+    icon: '🏷️',
+    category: 'operations'
+  },
+  {
+    id: 'budget-vs-actual',
+    name: 'Budget vs Actual',
+    description: 'Variance by product, region, and period',
+    prompt: 'Create a budget vs actual dashboard showing total budget vs actual, variance by product or cost center, and variance trend over time',
+    icon: '📊',
+    category: 'finance'
+  },
+  {
     id: 'executive-summary',
     name: 'Executive Summary',
     description: 'High-level KPIs and business health',

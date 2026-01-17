@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, Legend,
@@ -32,7 +32,7 @@ const SCHEMES: Record<string, { colors: string[]; label: string }> = {
   alert: { label: 'Risk Alert', colors: ['#b91c1c', '#dc2626', '#ef4444', '#f87171', '#fca5a5', '#fee2e2'] }
 };
 
-const CustomTooltip = ({ active, payload, label, xAxisName, yAxisName, type }: any) => {
+const CustomTooltip = ({ active, payload, label, xAxisName, yAxisName, type, formatXAxisValue }: any) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-slate-900/95 backdrop-blur-xl border border-white/10 p-4 rounded-2xl shadow-2xl min-w-[190px] animate-in fade-in zoom-in-95 duration-200 ring-1 ring-white/5">
@@ -42,7 +42,7 @@ const CustomTooltip = ({ active, payload, label, xAxisName, yAxisName, type }: a
               {xAxisName || 'Data Reference'}
             </p>
             <p className="text-white text-sm font-bold truncate">
-              {label}
+              {formatXAxisValue ? formatXAxisValue(label) : label}
             </p>
           </div>
 
@@ -109,10 +109,82 @@ const SqlChart: React.FC<SqlChartProps> = ({
   const colors = customColors || activeScheme.colors;
   const mainColor = colors[0];
 
+  const xAxisMeta = useMemo(() => {
+    const sample = data.slice(0, 12).map(row => row[xAxis]);
+    const parsedDates = sample
+      .map((value) => {
+        if (value instanceof Date) return value;
+        if (typeof value === 'number') {
+          const d = new Date(value);
+          return isNaN(d.getTime()) ? null : d;
+        }
+        if (typeof value === 'string') {
+          const d = new Date(value);
+          return isNaN(d.getTime()) ? null : d;
+        }
+        return null;
+      })
+      .filter(Boolean) as Date[];
+
+    const isDate = parsedDates.length >= Math.max(2, Math.floor(sample.length / 2));
+    const timestamps = parsedDates.map(d => d.getTime()).sort((a, b) => a - b);
+    const spanMs = timestamps.length > 1 ? (timestamps[timestamps.length - 1] - timestamps[0]) : 0;
+
+    const maxLabelLength = sample.reduce((max, value) => {
+      if (value == null) return max;
+      const str = String(value);
+      return Math.max(max, str.length);
+    }, 0);
+
+    return { isDate, spanMs, maxLabelLength };
+  }, [data, xAxis]);
+
+  const formatDateTick = (value: any) => {
+    const d = value instanceof Date ? value : new Date(value);
+    if (isNaN(d.getTime())) return String(value);
+    const spanDays = xAxisMeta.spanMs / (1000 * 60 * 60 * 24);
+    if (spanDays > 730) {
+      return d.toLocaleDateString('en-US', { year: 'numeric' });
+    }
+    if (spanDays > 90) {
+      return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+    }
+    if (spanDays > 2) {
+      return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+    }
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatCategoryTick = (value: any) => {
+    if (value == null) return '';
+    const str = String(value);
+    if (str.length <= 12) return str;
+    return `${str.slice(0, 10)}...`;
+  };
+
+  const formatXAxisValue = (value: any) => {
+    return xAxisMeta.isDate ? formatDateTick(value) : formatCategoryTick(value);
+  };
+
+  const formatYAxisValue = (value: any) => {
+    if (typeof value !== 'number') return value;
+    return new Intl.NumberFormat('en-US', {
+      notation: 'compact',
+      maximumFractionDigits: 1
+    }).format(value);
+  };
+
+  const tickInterval = xAxisMeta.isDate
+    ? (data.length > 6 ? Math.ceil(data.length / 6) - 1 : 0)
+    : (data.length <= 12 ? 0 : Math.ceil(data.length / 8) - 1);
+  const tickAngle = !xAxisMeta.isDate && (data.length > 8 || xAxisMeta.maxLabelLength > 10) ? -25 : 0;
+  const barSize = Math.max(8, Math.min(32, Math.floor(420 / Math.max(data.length, 1))));
+
   const tooltipCommonProps = {
     xAxisName: xAxis,
     yAxisName: yAxis,
-    type: type
+    type: type,
+    formatXAxisValue: formatXAxisValue
   };
 
   const renderChart = () => {
@@ -121,8 +193,20 @@ const SqlChart: React.FC<SqlChartProps> = ({
         return (
           <BarChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-            <XAxis dataKey={xAxis} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} dy={10} />
-            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+            <XAxis
+              dataKey={xAxis}
+              tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+              axisLine={false}
+              tickLine={false}
+              dy={10}
+              interval={tickInterval}
+              minTickGap={12}
+              tickFormatter={formatXAxisValue}
+              angle={tickAngle}
+              textAnchor={tickAngle ? 'end' : 'middle'}
+              height={tickAngle ? 50 : 30}
+            />
+            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} tickFormatter={formatYAxisValue} />
             <Tooltip 
               cursor={{ fill: '#f8fafc', radius: 8 }} 
               content={<CustomTooltip {...tooltipCommonProps} />} 
@@ -132,7 +216,7 @@ const SqlChart: React.FC<SqlChartProps> = ({
               dataKey={yAxis} 
               fill={mainColor} 
               radius={[6, 6, 0, 0]} 
-              barSize={32} 
+              barSize={barSize} 
             />
           </BarChart>
         );
@@ -140,8 +224,20 @@ const SqlChart: React.FC<SqlChartProps> = ({
         return (
           <LineChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-            <XAxis dataKey={xAxis} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} dy={10} />
-            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+            <XAxis
+              dataKey={xAxis}
+              tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+              axisLine={false}
+              tickLine={false}
+              dy={10}
+              interval={tickInterval}
+              minTickGap={12}
+              tickFormatter={formatXAxisValue}
+              angle={tickAngle}
+              textAnchor={tickAngle ? 'end' : 'middle'}
+              height={tickAngle ? 50 : 30}
+            />
+            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} tickFormatter={formatYAxisValue} />
             <Tooltip content={<CustomTooltip {...tooltipCommonProps} />} />
             <Line 
               type="monotone" 
@@ -163,8 +259,20 @@ const SqlChart: React.FC<SqlChartProps> = ({
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-            <XAxis dataKey={xAxis} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} dy={10} />
-            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+            <XAxis
+              dataKey={xAxis}
+              tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+              axisLine={false}
+              tickLine={false}
+              dy={10}
+              interval={tickInterval}
+              minTickGap={12}
+              tickFormatter={formatXAxisValue}
+              angle={tickAngle}
+              textAnchor={tickAngle ? 'end' : 'middle'}
+              height={tickAngle ? 50 : 30}
+            />
+            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} tickFormatter={formatYAxisValue} />
             <Tooltip content={<CustomTooltip {...tooltipCommonProps} />} />
             <Area 
               type="monotone" 
@@ -233,11 +341,23 @@ const SqlChart: React.FC<SqlChartProps> = ({
         return (
           <ComposedChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-            <XAxis dataKey={xAxis} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} dy={10} />
-            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+            <XAxis
+              dataKey={xAxis}
+              tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+              axisLine={false}
+              tickLine={false}
+              dy={10}
+              interval={tickInterval}
+              minTickGap={12}
+              tickFormatter={formatXAxisValue}
+              angle={tickAngle}
+              textAnchor={tickAngle ? 'end' : 'middle'}
+              height={tickAngle ? 50 : 30}
+            />
+            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} tickFormatter={formatYAxisValue} />
             <Tooltip content={<CustomTooltip {...tooltipCommonProps} />} />
             <Legend verticalAlign="top" align="right" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
-            <Bar dataKey={yAxis} fill={mainColor} radius={[4, 4, 0, 0]} barSize={20} name="Primary Metric" />
+            <Bar dataKey={yAxis} fill={mainColor} radius={[4, 4, 0, 0]} barSize={barSize} name="Primary Metric" />
             {yAxisSecondary && (
               <Line 
                 type="monotone" 

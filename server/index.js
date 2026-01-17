@@ -13,6 +13,24 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// --- Shopify OAuth (in-memory; replace with persistent storage for production) ---
+const shopifyTokens = new Map(); // shop -> access_token
+const shopifyStates = new Map(); // shop -> state
+
+function normalizeShopDomain(shop) {
+  if (typeof shop !== 'string') return '';
+  return shop.replace(/^https?:\/\//i, '').trim();
+}
+
+function isValidShopDomain(shop) {
+  const normalized = normalizeShopDomain(shop);
+  return normalized.endsWith('.myshopify.com');
+}
+
+function generateState() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 // Parse connection string to extract components (supports JDBC format)
 function parseConnectionString(connectionString, dialect) {
   try {
@@ -374,6 +392,34 @@ async function executeQuery(config, query) {
   throw new Error(`Unsupported dialect: ${config.dialect}`);
 }
 
+// Limit chart data for readability when the SQL returns too many points
+function limitChartData(chartData, chartConfig) {
+  if (!Array.isArray(chartData) || chartData.length === 0 || !chartConfig) return chartData;
+
+  const type = chartConfig.type;
+  const xAxis = chartConfig.xAxis;
+  const yAxis = chartConfig.yAxis;
+
+  const isCategorical = ['bar', 'pie', 'radar', 'composed'].includes(type);
+  const isSeries = ['line', 'area'].includes(type);
+
+  if (isCategorical && chartData.length > 12) {
+    const sorted = [...chartData].sort((a, b) => {
+      const aVal = Number(a?.[yAxis]) || 0;
+      const bVal = Number(b?.[yAxis]) || 0;
+      return bVal - aVal;
+    });
+    return sorted.slice(0, 12);
+  }
+
+  if (isSeries && chartData.length > 24) {
+    const step = Math.ceil(chartData.length / 24);
+    return chartData.filter((_, idx) => idx % step === 0);
+  }
+
+  return chartData;
+}
+
 // --- Self-Healing Query Middleware ---
 async function selfHealingQuery(config, sql, maxRetries = 2) {
   let attempt = 0;
@@ -442,6 +488,8 @@ IMPORTANT SQL RULES:
 3. For PostgreSQL, use double quotes for identifiers if needed.
 4. Limit results to 100 rows max unless user asks for more.
 5. Use aggregations (COUNT, SUM, AVG, etc.) for chart-friendly data.
+6. For categorical charts, return TOP 10-12 categories (ORDER BY metric DESC + LIMIT).
+7. For time series, bucket dates using DATE_TRUNC (day/week/month/quarter/year). Default to month if the user doesn't specify.
 
 VISUALIZATION RULES:
 1. Select the most effective chart type:
@@ -535,6 +583,8 @@ Do not wrap the JSON in markdown blocks.`;
         if (chartData.length > 100) {
           chartData = chartData.slice(0, 100);
         }
+
+        chartData = limitChartData(chartData, parsed.chartConfig);
       } catch (queryError) {
         console.error('SQL execution error:', queryError.message);
         sqlError = queryError.message;
@@ -562,6 +612,92 @@ Do not wrap the JSON in markdown blocks.`;
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Shopify OAuth: start
+app.get('/api/integrations/shopify/authorize', (req, res) => {
+  const { shop } = req.query;
+  const clientId = process.env.SHOPIFY_CLIENT_ID;
+  const redirectUri = process.env.SHOPIFY_REDIRECT_URI || 'https://dev2-8561.myshopify.com/admin/oauth/authorize';
+  const scopes = (process.env.SHOPIFY_SCOPES || 'read_all_orders,read_customers,read_price_rules,write_price_rules,read_discounts,write_discounts')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .join(',');
+
+  if (!clientId) {
+    return res.status(400).json({ success: false, error: 'SHOPIFY_CLIENT_ID is required.' });
+  }
+  const normalizedShop = normalizeShopDomain(shop);
+  if (!isValidShopDomain(normalizedShop)) {
+    return res.status(400).json({ success: false, error: 'Invalid shop domain. Use *.myshopify.com' });
+  }
+
+  const state = generateState();
+  shopifyStates.set(normalizedShop, state);
+
+  const authUrl = `https://${normalizedShop}/admin/oauth/authorize?client_id=${clientId}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+  res.json({ success: true, url: authUrl });
+});
+
+// Shopify OAuth: callback
+app.get('/api/integrations/shopify/callback', async (req, res) => {
+  const { shop, code, state } = req.query;
+  const clientId = process.env.SHOPIFY_CLIENT_ID;
+  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+  const appRedirect = process.env.APP_BASE_URL || 'http://localhost:3000';
+
+  if (!clientId || !clientSecret) {
+    return res.status(400).send('Missing Shopify credentials.');
+  }
+  const normalizedShop = normalizeShopDomain(shop);
+  if (!isValidShopDomain(normalizedShop)) {
+    return res.status(400).send('Invalid shop domain.');
+  }
+  const expectedState = shopifyStates.get(normalizedShop);
+  if (!expectedState || expectedState !== state) {
+    return res.status(400).send('Invalid OAuth state.');
+  }
+
+  try {
+    const tokenRes = await fetch(`https://${normalizedShop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code
+      })
+    });
+
+    if (!tokenRes.ok) {
+      const errorText = await tokenRes.text();
+      throw new Error(errorText || 'Failed to exchange Shopify token.');
+    }
+
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) {
+      throw new Error('No access_token in response.');
+    }
+
+    shopifyTokens.set(normalizedShop, tokenData.access_token);
+    shopifyStates.delete(normalizedShop);
+
+    res.redirect(`${appRedirect}/?shopify=connected&shop=${encodeURIComponent(normalizedShop)}`);
+  } catch (error) {
+    res.status(500).send(error.message || 'Shopify OAuth failed.');
+  }
+});
+
+// Shopify OAuth: status
+app.get('/api/integrations/shopify/status', (req, res) => {
+  const { shop } = req.query;
+  const normalizedShop = normalizeShopDomain(shop);
+  if (!isValidShopDomain(normalizedShop)) {
+    return res.status(400).json({ success: false, error: 'Invalid shop domain.' });
+  }
+  const connected = shopifyTokens.has(normalizedShop);
+  res.json({ success: true, connected });
 });
 
 // Report scheduling endpoint (stores schedule for future email integration)
@@ -668,6 +804,8 @@ CORE OPERATIONAL RULES:
 - NO PLACEHOLDERS: Do NOT generate widgets with empty, random, or placeholder data.
 - DIVERSITY: Use a variety of chart types; do not repeat the same chart type for all widgets.
 - DENSITY: Limit SQL results to 10-20 rows per widget to ensure readability and high-performance rendering.
+- TOP-N: For categorical charts, return TOP 10-12 categories (ORDER BY metric DESC + LIMIT).
+- TIME BUCKETING: For time series, bucket dates using DATE_TRUNC (day/week/month/quarter/year). Default to month if the user doesn't specify.
 - FORMATTING: Return ONLY valid JSON. Do not wrap JSON in markdown (no \`\`\`json blocks).
 
 SELF-HEALING & ACCURACY GUARDRAILS:
@@ -788,6 +926,7 @@ Do not wrap JSON in markdown. Return only valid JSON.
           if (chartData.length > 50) {
             chartData = chartData.slice(0, 50);
           }
+          chartData = limitChartData(chartData, widget.chartConfig);
           // --- Smart Narrative Generation ---
           // Use OpenAI to generate a plain-language summary for this chart
           const narrativePrompt = `You are a data analyst. Given the following chart data and its explanation, write a concise, plain-language summary (2-3 sentences) for non-technical users. Focus on key takeaways, trends, and any notable points.\n\nChart Explanation: ${widget.explanation}\n\nChart Data (JSON): ${JSON.stringify(chartData).slice(0, 2000)}\n`;
@@ -840,6 +979,154 @@ Do not wrap JSON in markdown. Return only valid JSON.
     
   } catch (error) {
     console.error('❌ Auto-dashboard generation error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DASHBOARD CHAT ENDPOINT
+// Adds new widgets to an existing dashboard based on user prompt
+app.post('/api/dashboard-chat', async (req, res) => {
+  const { prompt, schemaContext, apiKey, dbConnection, dashboardItems = [] } = req.body;
+
+  const openaiApiKey = (apiKey && apiKey.trim()) ? apiKey.trim() : process.env.OPENAI_API_KEY;
+  if (!openaiApiKey) {
+    return res.status(400).json({ success: false, error: 'OpenAI API key is required.' });
+  }
+
+  if (!schemaContext || typeof schemaContext !== 'string' || !schemaContext.trim()) {
+    return res.status(400).json({ success: false, error: 'Database schema is required.' });
+  }
+
+  if (!dbConnection) {
+    return res.status(400).json({ success: false, error: 'Database connection is required.' });
+  }
+
+  const sanitizedItems = (dashboardItems || []).map(item => ({
+    title: item.title,
+    sql: item.sql,
+    chartType: item.chartConfig?.type,
+    xAxis: item.chartConfig?.xAxis,
+    yAxis: item.chartConfig?.yAxis
+  }));
+
+  const systemPrompt = `You are a finance operations dashboard assistant.
+
+DATABASE SCHEMA:
+${schemaContext}
+
+CURRENT DASHBOARD WIDGETS (for context; do not repeat unless requested):
+${JSON.stringify(sanitizedItems, null, 2)}
+
+TASK:
+Given the user's request, generate 1-3 NEW widgets to add to this dashboard.
+
+RULES:
+- Use only tables/columns from the schema above.
+- Do not duplicate existing widgets.
+- Limit each query to 10-50 rows for chart readability.
+- Prefer finance-ops metrics (cash flow, AP/AR aging, budget vs actuals, vendor spend, cost centers, margin).
+- Use COALESCE for numeric aggregations and NULLIF for division.
+- For categorical charts, return TOP 10-12 categories (ORDER BY metric DESC + LIMIT).
+- For time series, bucket dates using DATE_TRUNC (day/week/month/quarter/year). Default to month if not specified.
+- Return only JSON with the exact structure below.
+
+RESPONSE FORMAT (JSON):
+{
+  "summary": "Short summary of what you added",
+  "widgets": [
+    {
+      "title": "Widget Title",
+      "sql": "SELECT ...",
+      "explanation": "What this widget shows",
+      "chartConfig": {
+        "type": "bar|line|pie|area|radar|scatter|composed|gauge|heatmap|geo|kpi",
+        "xAxis": "column_name",
+        "yAxis": "column_name",
+        "title": "Chart Title",
+        "colorScheme": "default|trust|growth|performance|categorical|warm|cool|alert"
+      }
+    }
+  ]
+}`;
+
+  try {
+    console.log('💬 Dashboard chat request:', prompt);
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiApiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+        max_tokens: 2048
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error?.message || `OpenAI API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices[0]?.message?.content;
+    if (!content) throw new Error('No response from OpenAI');
+
+    const parsed = JSON.parse(content);
+    const widgets = Array.isArray(parsed.widgets) ? parsed.widgets : [];
+
+    const widgetsWithData = [];
+
+    for (const widget of widgets) {
+      let chartData = [];
+      let sqlError = null;
+
+      if (widget.sql) {
+        try {
+          const config = {
+            host: dbConnection.host,
+            port: dbConnection.port || '5432',
+            username: dbConnection.username,
+            password: dbConnection.password,
+            database: dbConnection.database,
+            dialect: dbConnection.dialect || 'postgresql',
+            ssl: dbConnection.ssl || dbConnection.host.includes('azure.com')
+          };
+
+          chartData = await executeQuery(config, widget.sql);
+          if (chartData.length > 50) chartData = chartData.slice(0, 50);
+          chartData = limitChartData(chartData, widget.chartConfig);
+        } catch (queryError) {
+          sqlError = queryError.message;
+        }
+      }
+
+      widgetsWithData.push({
+        title: widget.title,
+        sql: widget.sql,
+        explanation: widget.explanation,
+        chartConfig: widget.chartConfig,
+        chartData,
+        sqlError
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        summary: parsed.summary || 'Added new widgets.',
+        widgets: widgetsWithData
+      }
+    });
+  } catch (error) {
+    console.error('❌ Dashboard chat error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -899,6 +1186,8 @@ Fix the SQL query so it executes successfully. Consider:
 3. Ensure aggregations have proper GROUP BY clauses
 4. Handle NULL values if needed
 5. Use proper date functions if applicable
+6. For categorical charts, return TOP 10-12 categories (ORDER BY metric DESC + LIMIT).
+7. For time series, bucket dates using DATE_TRUNC (day/week/month/quarter/year). Default to month if not specified.
 ${refinementPrompt ? `6. Apply the user's refinement: "${refinementPrompt}"` : ''}
 
 RESPONSE FORMAT (JSON):
@@ -974,6 +1263,7 @@ Return only valid JSON without markdown blocks.`;
         if (chartData.length > 50) {
           chartData = chartData.slice(0, 50);
         }
+        chartData = limitChartData(chartData, parsed.chartConfig);
       } catch (queryError) {
         console.error(`❌ Regeneration still failed:`, queryError.message);
         sqlError = queryError.message;
@@ -1143,6 +1433,7 @@ app.post('/api/multiturn-chat', async (req, res) => {
         };
         chartData = await executeQuery(config, parsed.sql);
         if (chartData.length > 100) chartData = chartData.slice(0, 100);
+        chartData = limitChartData(chartData, parsed.chartConfig);
       } catch (queryError) {
         sqlError = queryError.message;
       }
@@ -1165,3 +1456,9 @@ app.post('/api/multiturn-chat', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
+
+// Daily sync stub for Shopify (replace with real job + storage)
+setInterval(() => {
+  if (shopifyTokens.size === 0) return;
+  console.log('🕒 Shopify daily sync stub:', Array.from(shopifyTokens.keys()));
+}, 1000 * 60 * 60 * 24);
