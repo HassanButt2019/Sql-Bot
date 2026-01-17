@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { DashboardItem } from '../types';
+import { DashboardItem, DashboardReport } from '../types';
 import SqlChart from './SqlChart';
+import ReportGenerator from './ReportGenerator';
 import { 
   Trash2Icon, 
   LayoutGridIcon, 
@@ -9,21 +10,29 @@ import {
   CheckIcon,
   FileSpreadsheetIcon,
   PrinterIcon,
-  ColumnsIcon,
-  MaximizeIcon,
-  MinimizeIcon
+  FileTextIcon
 } from 'lucide-react';
 
 interface DashboardProps {
   items: DashboardItem[];
   title?: string;
+  dashboardId?: string;
   onRemove: (id: string) => void;
-  onUpdateSize: (id: string, size: 4 | 6 | 12) => void;
   onUpdateItemScheme?: (id: string, scheme: string) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboard", onRemove, onUpdateSize, onUpdateItemScheme }) => {
+const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboard", dashboardId, onRemove, onUpdateItemScheme }) => {
   const [showShareToast, setShowShareToast] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+
+  // Create a mock dashboard object for the report generator
+  const currentDashboard: DashboardReport = {
+    id: dashboardId || 'default',
+    title: title,
+    items: items,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
 
   const handleExportPDF = () => {
     setTimeout(() => {
@@ -65,7 +74,7 @@ const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboa
   };
 
   return (
-    <div className="p-8 max-w-full mx-auto dashboard-container relative">
+    <div id="dashboard-export-container" className="p-8 max-w-full mx-auto dashboard-container relative">
       <header className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-2">
@@ -82,6 +91,14 @@ const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboa
           </div>
 
           <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setIsReportModalOpen(true)}
+              title="Generate Report"
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-all shadow-lg active:scale-95"
+            >
+              <FileTextIcon className="w-4 h-4" />
+              <span className="hidden sm:inline">Report</span>
+            </button>
             <button 
               onClick={handleExportPDF}
               title="Print to PDF"
@@ -137,39 +154,13 @@ const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboa
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
           {items.map((item) => {
-            let spanClass = "md:col-span-6";
-            if (item.colSpan === 4) spanClass = "md:col-span-4";
-            if (item.colSpan === 6) spanClass = "md:col-span-6";
-            if (item.colSpan === 12) spanClass = "md:col-span-12";
-
             return (
               <div 
                 key={item.id} 
-                className={`group relative transition-all duration-300 ease-in-out min-w-0 ${spanClass}`}
+                className="group relative transition-all duration-300 ease-in-out min-w-0 md:col-span-6"
               >
                 <div className="absolute top-4 right-4 z-20 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 no-print">
                   <div className="flex gap-2 p-1.5 bg-white/95 backdrop-blur shadow-2xl rounded-2xl border border-slate-200">
-                    <button
-                      onClick={() => onUpdateSize(item.id, 4)}
-                      title="1/3 Width"
-                      className={`p-2 rounded-xl transition-all ${item.colSpan === 4 ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-400'}`}
-                    >
-                      <MinimizeIcon className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => onUpdateSize(item.id, 6)}
-                      title="1/2 Width"
-                      className={`p-2 rounded-xl transition-all ${item.colSpan === 6 ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-400'}`}
-                    >
-                      <ColumnsIcon className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => onUpdateSize(item.id, 12)}
-                      title="Full Width"
-                      className={`p-2 rounded-xl transition-all ${item.colSpan === 12 ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-400'}`}
-                    >
-                      <MaximizeIcon className="w-4 h-4" />
-                    </button>
                     <div className="w-px h-4 bg-slate-200 self-center mx-1" />
                     <button
                       onClick={() => onRemove(item.id)}
@@ -183,12 +174,13 @@ const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboa
 
                 <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden hover:shadow-2xl hover:shadow-blue-500/5 transition-all">
                   <SqlChart
-                    type={item.chartConfig.type}
+                    id={item.id}
+                    type={item.chartConfig.type as 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed'}
                     data={item.chartData}
                     xAxis={item.chartConfig.xAxis}
                     yAxis={item.chartConfig.yAxis}
                     title={item.title}
-                    height={item.height}
+                    height={Math.max(400, item.height)}
                     colorScheme={item.chartConfig.colorScheme}
                     onUpdateScheme={(scheme) => onUpdateItemScheme?.(item.id, scheme)}
                   />
@@ -220,6 +212,14 @@ const Dashboard: React.FC<DashboardProps> = ({ items, title = "Analytics Dashboa
           <p className="text-[10px] text-slate-300">© 2024 SQLMind Analytics Suite</p>
         </div>
       </footer>
+
+      {/* Report Generator Modal */}
+      <ReportGenerator
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        dashboard={currentDashboard}
+        items={items}
+      />
     </div>
   );
 };
