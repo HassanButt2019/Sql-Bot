@@ -1,20 +1,47 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
 
-# Run and deploy your AI Studio app
+# SQLMind - AI Financial BI Suite
 
-This contains everything you need to run your app locally.
+SQLMind is a professional-grade Business Intelligence platform that leverages Generative AI (Google Gemini) to transform natural language queries into executable SQL, interactive data visualizations, and high-stakes financial reports.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1O2OmZw8F97P-auD5TNTNJq-5iDHM8X8F
+## 🚀 Key Features
 
-## Run Locally
+- **Multi-Model Intelligence**: Seamlessly switch between Gemini 3 Pro, Flash, and other flagship models.
+- **Financial Compliance Mode**: Built-in PII masking, anomaly detection, and audit trails for banking-grade security.
+- **Interactive Dashboards**: Persistent, resizable charts with real-time alerting and multi-format exports (PDF/CSV).
+- **Dynamic Database Introspection**: Connect and analyze complex schemas (PostgreSQL, MySQL, SQLite) without sending data to the cloud.
+- **Smart Visualizations**: Automated chart selection including Bar, Line, Area, Pie, Radar, and Composed charts with customizable color palettes.
 
-**Prerequisites:**  Node.js
+## 🛠️ Setup Instructions
 
+### 1. Prerequisites
+- Node.js (v18 or higher)
+- A Google Gemini API Key
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 2. Installation
+```bash
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/sqlmind-bi-suite.git
+
+# Navigate to the project
+cd sqlmind-bi-suite
+
+# Install dependencies
+npm install
+```
+
+### 3. Environment Configuration
+Create a `.env` file in the root directory:
+```env
+API_KEY=your_gemini_api_key_here
+```
+
+### 4. Start the Application
+```bash
+npm run start
+```
+
+## 🔒 Security & Privacy
+This application utilizes local database introspection. Database credentials and actual data records remain local to your environment; only schema metadata and natural language prompts are shared with the AI model to generate insights.
+
+## 📄 License
+MIT
