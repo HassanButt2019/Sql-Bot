@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Message, Conversation, DashboardItem, DashboardReport, LLMModel, DbConnection, TableInfo, DbDialect } from './types';
+import { Message, Conversation, DashboardItem, DashboardReport, LLMModel, DbConnection, TableInfo, DbDialect, ExcelWorkbook, ExcelSheet, ExcelColumn } from './types';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import EnhancedDashboard from './components/EnhancedDashboard';
@@ -8,6 +8,8 @@ import AutoDashboardGenerator from './components/AutoDashboardGenerator';
 import { queryModel } from './services/llmRouter';
 import { regenerateSingleWidget } from './services/autoDashboardService';
 import { introspectDatabase, parseConnectionString, validateConnectionString, testDatabaseConnection } from './services/introspectionService';
+import { registerExcelSheets, getDuckDbTableSchema, executeDuckDbQuery, ensureUniqueIdentifiers, sanitizeIdentifier } from './services/excelDuckdbService';
+import * as XLSX from 'xlsx';
 import { 
   SendIcon, 
   TerminalIcon, 
@@ -34,10 +36,16 @@ import {
   BarChart3Icon,
   Link2Icon,
   AlertCircleIcon,
-  SparklesIcon
+  SparklesIcon,
+  UploadCloudIcon,
+  FileSpreadsheetIcon
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const EXCEL_CONNECTION_ID = 'excel-local';
+const safeStringify = (value: any) => JSON.stringify(value, (_key, val) => (
+  typeof val === 'bigint' ? val.toString() : val
+));
 
 // Sub-component for Assistant Response to manage local tab state per message
 const AssistantResponse: React.FC<{
@@ -199,7 +207,7 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [openAiApiKey, setOpenAiApiKey] = useState(() => localStorage.getItem('sqlmind_openai_key') || import.meta.env.VITE_OPENAI_API_KEY || '');
   const [selectedTableName, setSelectedTableName] = useState<string | null>(null);
-  const [integrationCategory, setIntegrationCategory] = useState<'all' | 'databases' | 'nosql' | 'graph' | 'crm' | 'ecommerce'>('all');
+  const [integrationCategory, setIntegrationCategory] = useState<'all' | 'databases' | 'nosql' | 'graph' | 'crm' | 'ecommerce' | 'files'>('all');
   const [integrationSearch, setIntegrationSearch] = useState('');
   const [selectedIntegrationId, setSelectedIntegrationId] = useState<string | null>(null);
   const [integrationUseUrl, setIntegrationUseUrl] = useState(false);
@@ -218,6 +226,10 @@ const App: React.FC = () => {
     dialect: (import.meta.env.VITE_DB_DIALECT || 'postgresql') as DbDialect
   });
   const [shopifyStoreDomain, setShopifyStoreDomain] = useState(import.meta.env.VITE_SHOPIFY_STORE || '');
+  const [excelWorkbook, setExcelWorkbook] = useState<ExcelWorkbook | null>(null);
+  const [excelActiveSheetId, setExcelActiveSheetId] = useState<string | null>(null);
+  const [excelIsLoading, setExcelIsLoading] = useState(false);
+  const [excelError, setExcelError] = useState<string | null>(null);
   const [integrationIsConnecting, setIntegrationIsConnecting] = useState(false);
   const [integrationError, setIntegrationError] = useState<string | null>(null);
   const [integrationTables, setIntegrationTables] = useState<TableInfo[]>([]);
@@ -234,10 +246,11 @@ const App: React.FC = () => {
   const integrations = [
     { id: 'relational', name: 'Relational (SQL) Databases', category: 'databases', status: 'available', description: 'PostgreSQL, MySQL, SQL Server' },
     { id: 'nosql', name: 'Non-Relational (NoSQL) Databases', category: 'nosql', status: 'available', description: 'MongoDB, DynamoDB, Redis' },
-    { id: 'graph', name: 'Graph Databases', category: 'graph', status: 'available', description: 'Neo4j, Amazon Neptune' },
-    { id: 'hubspot', name: 'HubSpot', category: 'crm', status: 'available', description: 'CRM, Deals, Contacts' },
-    { id: 'zoho', name: 'Zoho CRM', category: 'crm', status: 'available', description: 'Leads, Accounts, Pipeline' },
-    { id: 'shopify', name: 'Shopify', category: 'ecommerce', status: 'available', description: 'Orders, Products, Customers' }
+    // { id: 'graph', name: 'Graph Databases', category: 'graph', status: 'available', description: 'Neo4j, Amazon Neptune' },
+    // { id: 'hubspot', name: 'HubSpot', category: 'crm', status: 'available', description: 'CRM, Deals, Contacts' },
+    // { id: 'zoho', name: 'Zoho CRM', category: 'crm', status: 'available', description: 'Leads, Accounts, Pipeline' },
+    // { id: 'shopify', name: 'Shopify', category: 'ecommerce', status: 'available', description: 'Orders, Products, Customers' },
+    { id: 'excel', name: 'Excel (XLSX)', category: 'files', status: 'available', description: 'Upload spreadsheets with multiple sheets' }
   ] as const;
 
   const integrationFields: Record<string, { id: string; label: string; type?: string; placeholder?: string }[]> = {
@@ -254,25 +267,25 @@ const App: React.FC = () => {
       { id: 'username', label: 'Username', placeholder: 'user' },
       { id: 'password', label: 'Password', type: 'password' }
     ],
-    graph: [
-      { id: 'endpoint', label: 'Endpoint', placeholder: 'bolt://host:7687' },
-      { id: 'database', label: 'Database', placeholder: 'neo4j' },
-      { id: 'username', label: 'Username', placeholder: 'neo4j' },
-      { id: 'password', label: 'Password', type: 'password' }
-    ],
-    hubspot: [
-      { id: 'apiKey', label: 'API Key / Token', placeholder: 'pat-...' },
-      { id: 'account', label: 'Account ID', placeholder: '123456' }
-    ],
-    zoho: [
-      { id: 'clientId', label: 'Client ID', placeholder: 'zoho-client-id' },
-      { id: 'clientSecret', label: 'Client Secret', type: 'password' },
-      { id: 'refreshToken', label: 'Refresh Token', type: 'password' }
-    ],
-    shopify: [
-      { id: 'storeUrl', label: 'Store URL', placeholder: 'store.myshopify.com' },
-      { id: 'accessToken', label: 'Access Token', type: 'password' }
-    ]
+    // graph: [
+    //   { id: 'endpoint', label: 'Endpoint', placeholder: 'bolt://host:7687' },
+    //   { id: 'database', label: 'Database', placeholder: 'neo4j' },
+    //   { id: 'username', label: 'Username', placeholder: 'neo4j' },
+    //   { id: 'password', label: 'Password', type: 'password' }
+    // ],
+    // hubspot: [
+    //   { id: 'apiKey', label: 'API Key / Token', placeholder: 'pat-...' },
+    //   { id: 'account', label: 'Account ID', placeholder: '123456' }
+    // ],
+    // zoho: [
+    //   { id: 'clientId', label: 'Client ID', placeholder: 'zoho-client-id' },
+    //   { id: 'clientSecret', label: 'Client Secret', type: 'password' },
+    //   { id: 'refreshToken', label: 'Refresh Token', type: 'password' }
+    // ],
+    // shopify: [
+    //   { id: 'storeUrl', label: 'Store URL', placeholder: 'store.myshopify.com' },
+    //   { id: 'accessToken', label: 'Access Token', type: 'password' }
+    // ]
   };
 
   // Initial Load
@@ -303,9 +316,10 @@ const App: React.FC = () => {
 
   // Persistence
   useEffect(() => {
-    localStorage.setItem('sqlmind_conversations_v3', JSON.stringify(conversations));
-    localStorage.setItem('sqlmind_dashboards_v3', JSON.stringify(dashboards));
-    localStorage.setItem('sqlmind_connections_v3', JSON.stringify(connections));
+    localStorage.setItem('sqlmind_conversations_v3', safeStringify(conversations));
+    localStorage.setItem('sqlmind_dashboards_v3', safeStringify(dashboards));
+    const persistedConnections = connections.filter(connection => !connection.isTemporary);
+    localStorage.setItem('sqlmind_connections_v3', safeStringify(persistedConnections));
   }, [conversations, dashboards, connections]);
 
   useEffect(() => {
@@ -315,6 +329,7 @@ const App: React.FC = () => {
   const activeConnection = connections.find(c => c.isActive);
   const currentConversation = conversations.find(c => c.id === currentChatId);
   const currentDashboard = dashboards.find(d => d.id === currentDashboardId);
+  const activeExcelSheet = excelWorkbook?.sheets.find(sheet => sheet.id === excelActiveSheetId) || null;
 
   useEffect(() => {
     if (!activeConnection || !activeConnection.tables.length) {
@@ -461,15 +476,225 @@ const App: React.FC = () => {
   };
 
   const getFullSchemaContext = () => {
-    if (!activeConnection) return '';
-    const selected = activeConnection.tables.filter(t => t.selected);
-    if (selected.length === 0) return '';
-    return selected.map(t => `TABLE: ${t.name}\nCOLUMNS: ${t.schema}`).join('\n\n');
+    if (activeConnection) {
+      const selected = activeConnection.tables.filter(t => t.selected);
+      if (selected.length === 0) return '';
+      return selected.map(t => `TABLE: ${t.name}\nCOLUMNS: ${t.schema}`).join('\n\n');
+    }
+    if (excelWorkbook) {
+      const selectedSheets = excelWorkbook.sheets
+        .filter(sheet => sheet.included && sheet.columns.some(col => col.included))
+        .map(sheet => {
+          const columns = sheet.columns.filter(col => col.included).map(col => `${col.name} (TEXT)`).join(', ');
+          return `TABLE: ${sheet.tableName}\nCOLUMNS: ${columns}`;
+        });
+      return selectedSheets.join('\n\n');
+    }
+    return '';
+  };
+
+  const hasExcelWorkbook = !!excelWorkbook;
+  const isExcelConnection = activeConnection?.sourceType === 'excel' || (!activeConnection && hasExcelWorkbook);
+  const localExecutor = isExcelConnection ? executeDuckDbQuery : undefined;
+
+  const upsertExcelConnection = (tables: TableInfo[], fileName: string) => {
+    const connection: DbConnection = {
+      id: EXCEL_CONNECTION_ID,
+      name: `Excel: ${fileName}`,
+      host: '',
+      port: '',
+      username: '',
+      database: fileName,
+      dialect: 'duckdb',
+      tables,
+      isActive: true,
+      status: 'connected',
+      isTemporary: true,
+      sourceType: 'excel'
+    };
+
+    setConnections(prev => {
+      const remaining = prev.filter(conn => conn.id !== EXCEL_CONNECTION_ID).map(conn => ({ ...conn, isActive: false }));
+      return [...remaining, connection];
+    });
+  };
+
+  const syncExcelWorkbook = async (workbook: ExcelWorkbook) => {
+    const sheetsToRegister = workbook.sheets.filter(sheet => sheet.included && sheet.columns.some(col => col.included));
+    if (sheetsToRegister.length === 0) {
+      setConnections(prev => prev.filter(conn => conn.id !== EXCEL_CONNECTION_ID));
+      return;
+    }
+
+    await registerExcelSheets(
+      sheetsToRegister.map(sheet => ({
+        tableName: sheet.tableName,
+        columns: sheet.columns,
+        data: sheet.data
+      }))
+    );
+
+    const tableInfos: TableInfo[] = [];
+    for (const sheet of sheetsToRegister) {
+      const schemaColumns = await getDuckDbTableSchema(sheet.tableName);
+      const schema = schemaColumns.map(col => `${col.name} (${col.type})`).join(', ');
+      tableInfos.push({
+        name: sheet.tableName,
+        schema,
+        selected: true
+      });
+    }
+
+    upsertExcelConnection(tableInfos, workbook.fileName);
+
+    setIntegrationStatuses(prev => ({ ...prev, excel: 'connected' }));
+    setIntegrationHistory(prev => {
+      const existing = prev.find(item => item.id === 'excel');
+      if (existing) {
+        return prev.map(item => item.id === 'excel'
+          ? { ...item, name: `Excel: ${workbook.fileName}`, connectedAt: Date.now() }
+          : item
+        );
+      }
+      return [{ id: 'excel', name: `Excel: ${workbook.fileName}`, connectedAt: Date.now() }, ...prev];
+    });
+  };
+
+  const getUniqueColumnName = (desired: string, columns: ExcelColumn[], columnId: string) => {
+    const base = sanitizeIdentifier(desired);
+    const existing = new Set(columns.filter(col => col.id !== columnId).map(col => col.name));
+    if (!existing.has(base)) return base;
+    let suffix = 2;
+    let candidate = `${base}_${suffix}`;
+    while (existing.has(candidate)) {
+      suffix += 1;
+      candidate = `${base}_${suffix}`;
+    }
+    return candidate;
+  };
+
+  const handleExcelUpload = async (file: File) => {
+    setExcelIsLoading(true);
+    setExcelError(null);
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheetNames = workbook.SheetNames;
+      const tableNames = ensureUniqueIdentifiers(sheetNames);
+
+      const sheets: ExcelSheet[] = sheetNames.map((sheetName, index) => {
+        const worksheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
+        const headerRow = rows[0] || [];
+        const maxCols = Math.max(headerRow.length, ...rows.slice(1).map(row => row.length), 0);
+        const rawColumns = Array.from({ length: maxCols || headerRow.length || 1 }).map((_, idx) => {
+          const value = headerRow[idx];
+          return value ? String(value) : `column_${idx + 1}`;
+        });
+        const columnNames = ensureUniqueIdentifiers(rawColumns);
+
+        const data = rows.slice(1).map((row) => {
+          const record: Record<string, any> = {};
+          columnNames.forEach((col, colIndex) => {
+            record[col] = row?.[colIndex] ?? null;
+          });
+          return record;
+        });
+
+        const columns: ExcelColumn[] = columnNames.map((col, colIndex) => ({
+          id: `${tableNames[index]}-${colIndex}-${Date.now()}`,
+          name: col,
+          originalName: rawColumns[colIndex],
+          included: true
+        }));
+
+        return {
+          id: `${tableNames[index]}-${Date.now()}`,
+          name: sheetName,
+          tableName: tableNames[index] || sanitizeIdentifier(sheetName),
+          columns,
+          rowCount: data.length,
+          included: true,
+          data
+        };
+      });
+
+      const nextWorkbook: ExcelWorkbook = {
+        fileName: file.name,
+        sheets
+      };
+
+      setExcelWorkbook(nextWorkbook);
+      setExcelActiveSheetId(sheets[0]?.id || null);
+      await syncExcelWorkbook(nextWorkbook);
+    } catch (err: any) {
+      setExcelError(err.message || 'Failed to parse Excel file.');
+    } finally {
+      setExcelIsLoading(false);
+    }
+  };
+
+  const updateExcelWorkbook = async (nextWorkbook: ExcelWorkbook | null) => {
+    if (!nextWorkbook) return;
+    setExcelWorkbook(nextWorkbook);
+    setExcelIsLoading(true);
+    setExcelError(null);
+    try {
+      await syncExcelWorkbook(nextWorkbook);
+    } catch (err: any) {
+      setExcelError(err.message || 'Failed to update Excel schema.');
+    } finally {
+      setExcelIsLoading(false);
+    }
+  };
+
+  const renameExcelColumn = async (sheetId: string, columnId: string, nextName: string) => {
+    if (!excelWorkbook) return;
+    const sheets = excelWorkbook.sheets.map(sheet => {
+      if (sheet.id !== sheetId) return sheet;
+      const columns = sheet.columns.map(column => {
+        if (column.id !== columnId) return column;
+        const uniqueName = getUniqueColumnName(nextName, sheet.columns, columnId);
+        return { ...column, name: uniqueName };
+      });
+      const oldColumn = sheet.columns.find(col => col.id === columnId);
+      const newColumn = columns.find(col => col.id === columnId);
+      if (!oldColumn || !newColumn || oldColumn.name === newColumn.name) {
+        return { ...sheet, columns };
+      }
+      const data = sheet.data.map(row => {
+        const nextRow = { ...row };
+        nextRow[newColumn.name] = row[oldColumn.name];
+        delete nextRow[oldColumn.name];
+        return nextRow;
+      });
+      return { ...sheet, columns, data };
+    });
+    await updateExcelWorkbook({ ...excelWorkbook, sheets });
+  };
+
+  const toggleExcelColumn = async (sheetId: string, columnId: string, included: boolean) => {
+    if (!excelWorkbook) return;
+    const sheets = excelWorkbook.sheets.map(sheet => {
+      if (sheet.id !== sheetId) return sheet;
+      return {
+        ...sheet,
+        columns: sheet.columns.map(column => column.id === columnId ? { ...column, included } : column)
+      };
+    });
+    await updateExcelWorkbook({ ...excelWorkbook, sheets });
+  };
+
+  const toggleExcelSheet = async (sheetId: string, included: boolean) => {
+    if (!excelWorkbook) return;
+    const sheets = excelWorkbook.sheets.map(sheet => sheet.id === sheetId ? { ...sheet, included } : sheet);
+    await updateExcelWorkbook({ ...excelWorkbook, sheets });
   };
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!userInput.trim() || isTyping || !activeConnection) return;
+    if (!userInput.trim() || isTyping || (!activeConnection && !excelWorkbook)) return;
     
     if (!openAiApiKey) {
       setIsSettingsOpen(true);
@@ -499,9 +724,16 @@ const App: React.FC = () => {
     setIsTyping(true);
 
     try {
-      const result = await queryModel(userMessage.content, schemaContext, openAiApiKey, activeConnection || null, (chunkText) => {
+      const result = await queryModel(
+        userMessage.content,
+        schemaContext,
+        openAiApiKey,
+        isExcelConnection ? null : activeConnection,
+        (chunkText) => {
         setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, content: chunkText } : m) } : c));
-      });
+        },
+        localExecutor
+      );
       
       setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, ...result, content: result.content || "Report generated." } : m) } : c));
     } catch (error: any) {
@@ -523,6 +755,11 @@ const App: React.FC = () => {
   const deleteConnection = (id: string) => {
     // Remove stored password
     localStorage.removeItem(`sqlmind_db_password_${id}`);
+
+    if (id === EXCEL_CONNECTION_ID) {
+      setExcelWorkbook(null);
+      setExcelActiveSheetId(null);
+    }
     
     const newConns = connections.filter(c => c.id !== id);
     if (activeConnection?.id === id && newConns.length > 0) newConns[0].isActive = true;
@@ -609,8 +846,9 @@ const App: React.FC = () => {
         widgetForRegeneration,
         schemaContext,
         openAiApiKey,
-        activeConnection,
-        refinementPrompt // Pass refinement prompt to the service
+        isExcelConnection ? null : activeConnection,
+        refinementPrompt, // Pass refinement prompt to the service
+        localExecutor
       );
 
       updateDashboardItem(widgetId, {
@@ -1024,9 +1262,10 @@ const App: React.FC = () => {
                         { id: 'all', label: 'All Sources' },
                         { id: 'databases', label: 'Relational (SQL)' },
                         { id: 'nosql', label: 'NoSQL' },
-                        { id: 'graph', label: 'Graph' },
-                        { id: 'crm', label: 'CRM' },
-                        { id: 'ecommerce', label: 'E-commerce' }
+                        // { id: 'graph', label: 'Graph' },
+                        // { id: 'crm', label: 'CRM' },
+                        // { id: 'ecommerce', label: 'E-commerce' },
+                        { id: 'files', label: 'Files' }
                       ].map(category => (
                         <button
                           key={category.id}
@@ -1092,7 +1331,130 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="col-span-8">
-                    <div className="p-6 bg-white border border-slate-100 rounded-3xl">
+                    {selectedIntegrationId === 'excel' ? (
+                      <div className="p-6 bg-white border border-slate-100 rounded-3xl space-y-6">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Excel Upload</p>
+                            <h4 className="text-xl font-black text-slate-900">Upload Spreadsheet</h4>
+                            <p className="text-xs text-slate-500 mt-1">All sheets are loaded for analysis. Columns can be renamed or removed.</p>
+                          </div>
+                        </div>
+
+                        <div className="border border-dashed border-slate-300 rounded-2xl p-6 bg-slate-50">
+                          <input
+                            id="excel-upload-input"
+                            type="file"
+                            accept=".xlsx,.xls"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                handleExcelUpload(file);
+                                e.currentTarget.value = '';
+                              }
+                            }}
+                          />
+                          <label
+                            htmlFor="excel-upload-input"
+                            className="flex items-center justify-center gap-3 px-5 py-4 rounded-2xl bg-white border border-slate-200 text-slate-700 font-semibold cursor-pointer hover:border-blue-300 hover:text-blue-600 transition-all"
+                          >
+                            <UploadCloudIcon className="w-5 h-5" />
+                            Upload Excel File
+                          </label>
+                          {excelWorkbook && (
+                            <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                              <FileSpreadsheetIcon className="w-4 h-4" />
+                              <span>{excelWorkbook.fileName}</span>
+                            </div>
+                          )}
+                          {excelIsLoading && (
+                            <div className="mt-3 text-xs font-semibold text-blue-600">Preparing Excel data...</div>
+                          )}
+                          {excelError && (
+                            <div className="mt-3 text-xs font-semibold text-red-600">{excelError}</div>
+                          )}
+                        </div>
+
+                        {excelWorkbook && (
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                  <FileSpreadsheetIcon className="w-4 h-4 text-blue-500" />
+                                  <span className="text-xs font-bold text-slate-700">Sheets</span>
+                                </div>
+                              </div>
+                              <div className="space-y-2 max-h-[320px] overflow-y-auto pr-2 custom-scrollbar">
+                                {excelWorkbook.sheets.map(sheet => (
+                                  <div
+                                    key={sheet.id}
+                                    className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-2xl border transition-all ${
+                                      activeExcelSheet?.id === sheet.id ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-blue-200'
+                                    }`}
+                                  >
+                                    <button
+                                      onClick={() => setExcelActiveSheetId(sheet.id)}
+                                      className="text-left flex-1"
+                                    >
+                                      <p className="text-sm font-bold text-slate-800">{sheet.name}</p>
+                                      <p className="text-[10px] text-slate-500">{sheet.rowCount} rows</p>
+                                    </button>
+                                    <input
+                                      type="checkbox"
+                                      checked={sheet.included}
+                                      onChange={(e) => toggleExcelSheet(sheet.id, e.target.checked)}
+                                      className="w-4 h-4 text-blue-600 rounded"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                  <FileTextIcon className="w-4 h-4 text-blue-500" />
+                                  <span className="text-xs font-bold text-slate-700">Columns</span>
+                                </div>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {activeExcelSheet ? activeExcelSheet.name : 'No sheet selected'}
+                                </span>
+                              </div>
+                              {activeExcelSheet ? (
+                                <div className="space-y-2 max-h-[320px] overflow-y-auto pr-2 custom-scrollbar">
+                                  {activeExcelSheet.columns.map(column => (
+                                    <div key={column.id} className="flex items-center gap-2">
+                                      <input
+                                        value={column.name}
+                                        onChange={(e) => renameExcelColumn(activeExcelSheet.id, column.id, e.target.value)}
+                                        disabled={!column.included}
+                                        className={`flex-1 px-3 py-2 rounded-xl border text-xs font-semibold ${
+                                          column.included ? 'bg-white border-slate-200' : 'bg-slate-100 border-slate-100 text-slate-400 line-through'
+                                        }`}
+                                      />
+                                      <button
+                                        onClick={() => toggleExcelColumn(activeExcelSheet.id, column.id, !column.included)}
+                                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${
+                                          column.included
+                                            ? 'bg-red-50 text-red-600 border border-red-200'
+                                            : 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                                        }`}
+                                      >
+                                        {column.included ? 'Remove' : 'Restore'}
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-400 italic">Select a sheet to edit columns.</div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-6 bg-white border border-slate-100 rounded-3xl">
                       <div className="flex items-center justify-between mb-6">
                         <div>
                           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Connection</p>
@@ -1307,6 +1669,7 @@ const App: React.FC = () => {
                         </div>
                       </div>
                     </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1445,11 +1808,11 @@ const App: React.FC = () => {
                     type="text"
                     value={userInput}
                     onChange={(e) => setUserInput(e.target.value)}
-                    placeholder={activeConnection ? `Ask ${activeConnection.database}...` : "Please connect to a database first..."}
-                    disabled={!activeConnection}
+                    placeholder={activeConnection ? `Ask ${activeConnection.database}...` : (excelWorkbook ? 'Ask your Excel data...' : 'Please connect to a database first...')}
+                    disabled={!activeConnection && !excelWorkbook}
                     className="w-full pl-6 pr-16 py-4 bg-slate-50 border border-slate-200 rounded-[2rem] focus:outline-none focus:ring-8 focus:ring-blue-500/5 focus:border-blue-500 focus:bg-white transition-all font-bold text-lg"
                   />
-                  <button type="submit" disabled={!userInput.trim() || isTyping || !activeConnection} className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-500/20 active:scale-95 disabled:opacity-30">
+                  <button type="submit" disabled={!userInput.trim() || isTyping || (!activeConnection && !excelWorkbook)} className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-500/20 active:scale-95 disabled:opacity-30">
                     <SendIcon className="w-5 h-5" />
                   </button>
                 </form>
@@ -1468,9 +1831,10 @@ const App: React.FC = () => {
                   onRegenerateWidget={handleRegenerateWidget}
                   onUpdateItemScheme={updateDashboardItemColorScheme}
                   onAddItems={appendDashboardItems}
-                  dbConnection={activeConnection || null}
+                  dbConnection={isExcelConnection ? null : (activeConnection || null)}
                   apiKey={openAiApiKey}
                   schemaContext={getFullSchemaContext()} // <-- Always pass valid, non-empty schemaContext
+                  localExecutor={localExecutor}
                 />
               ) : (
                 <Dashboard 
@@ -1562,9 +1926,10 @@ const App: React.FC = () => {
         isOpen={isAutoDashboardOpen}
         onClose={() => setIsAutoDashboardOpen(false)}
         onDashboardGenerated={handleAutoDashboardGenerated}
-        dbConnection={activeConnection || null}
+        dbConnection={isExcelConnection ? null : (activeConnection || null)}
         schemaContext={getFullSchemaContext()}
         apiKey={openAiApiKey}
+        localExecutor={localExecutor}
       />
     </div>
   );

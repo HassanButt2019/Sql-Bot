@@ -1,4 +1,5 @@
 import { DbConnection, DashboardItem } from '../types';
+import { limitChartData } from './excelDuckdbService';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -152,12 +153,13 @@ export async function generateAutoDashboard(
   apiKey: string,
   dbConnection: DbConnection | null,
   widgetCount: number = 15,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  localExecutor?: (sql: string) => Promise<any[]>
 ): Promise<AutoDashboardResult> {
   
   onProgress?.('🤖 AI is analyzing your request...');
   
-  if (!dbConnection) {
+  if (!dbConnection && !localExecutor) {
     throw new Error('Please connect to a database first.');
   }
   
@@ -166,7 +168,7 @@ export async function generateAutoDashboard(
   }
 
   // Prepare database connection info
-  const dbConnectionInfo = {
+  const dbConnectionInfo = dbConnection ? {
     host: dbConnection.host,
     port: dbConnection.port,
     username: dbConnection.username,
@@ -175,7 +177,7 @@ export async function generateAutoDashboard(
     dialect: dbConnection.dialect,
     connectionString: dbConnection.connectionString,
     useConnectionString: dbConnection.useConnectionString
-  };
+  } : null;
 
   onProgress?.('📊 Generating dashboard structure...');
 
@@ -202,7 +204,34 @@ export async function generateAutoDashboard(
 
     onProgress?.(`✅ Generated ${result.data.widgets.length} widgets!`);
     
-    return result.data as AutoDashboardResult;
+    const responseData = result.data as AutoDashboardResult;
+
+    if (!localExecutor) {
+      return responseData;
+    }
+
+    const widgetsWithLocalData = await Promise.all(
+      responseData.widgets.map(async (widget) => {
+        if (!widget.sql) {
+          return { ...widget, chartData: [], sqlError: 'No SQL generated.' };
+        }
+        try {
+          let chartData = await localExecutor(widget.sql);
+          if (chartData.length > 50) {
+            chartData = chartData.slice(0, 50);
+          }
+          chartData = limitChartData(chartData, widget.chartConfig);
+          return { ...widget, chartData };
+        } catch (err: any) {
+          return { ...widget, chartData: [], sqlError: err.message || 'Failed to execute SQL locally.' };
+        }
+      })
+    );
+
+    return {
+      ...responseData,
+      widgets: widgetsWithLocalData
+    };
     
   } catch (error: any) {
     console.error('Auto-dashboard generation error:', error);
@@ -217,16 +246,17 @@ export async function regenerateSingleWidget(
   failedWidget: AutoDashboardWidget,
   schemaContext: string,
   apiKey: string,
-  dbConnection: DbConnection,
-  refinementPrompt?: string
+  dbConnection: DbConnection | null,
+  refinementPrompt?: string,
+  localExecutor?: (sql: string) => Promise<any[]>
 ): Promise<AutoDashboardWidget> {
   
-  if (!dbConnection) {
+  if (!dbConnection && !localExecutor) {
     throw new Error('Database connection required');
   }
 
   // Prepare database connection info
-  const dbConnectionInfo = {
+  const dbConnectionInfo = dbConnection ? {
     host: dbConnection.host,
     port: dbConnection.port,
     username: dbConnection.username,
@@ -235,7 +265,7 @@ export async function regenerateSingleWidget(
     dialect: dbConnection.dialect,
     connectionString: dbConnection.connectionString,
     useConnectionString: dbConnection.useConnectionString
-  };
+  } : null;
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/regenerate-widget`, {
@@ -259,7 +289,22 @@ export async function regenerateSingleWidget(
       throw new Error(result.error || 'Failed to regenerate widget');
     }
 
-    return result.data as AutoDashboardWidget;
+    const regenerated = result.data as AutoDashboardWidget;
+
+    if (!localExecutor || !regenerated.sql) {
+      return regenerated;
+    }
+
+    try {
+      let chartData = await localExecutor(regenerated.sql);
+      if (chartData.length > 50) {
+        chartData = chartData.slice(0, 50);
+      }
+      chartData = limitChartData(chartData, regenerated.chartConfig);
+      return { ...regenerated, chartData };
+    } catch (err: any) {
+      return { ...regenerated, chartData: [], sqlError: err.message || 'Failed to execute SQL locally.' };
+    }
     
   } catch (error: any) {
     console.error('Widget regeneration error:', error);

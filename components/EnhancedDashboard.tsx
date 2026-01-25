@@ -60,6 +60,7 @@ interface EnhancedDashboardProps {
   apiKey: string;
   isEmbedMode?: boolean;
   schemaContext: string; // <-- Explicitly require schemaContext as a prop
+  localExecutor?: (sql: string) => Promise<any[]>;
 }
 
 const DEFAULT_THEME: ThemeConfig = {
@@ -85,7 +86,8 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
   dbConnection,
   apiKey,
   isEmbedMode = false,
-  schemaContext // <-- Use schemaContext from props
+  schemaContext, // <-- Use schemaContext from props
+  localExecutor
 }) => {
   const [showShareToast, setShowShareToast] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
@@ -457,8 +459,10 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
 
   return (
     <div id="dashboard-export-container" className="p-8 max-w-full mx-auto dashboard-container relative">
-      {/* Header */}
-      <header className="mb-8">
+      <div className={`flex gap-6 ${isChatOpen ? 'flex-col lg:flex-row' : 'flex-col'}`}>
+        <div className={`${isChatOpen ? 'w-full lg:w-[80%] min-w-0' : 'w-full'}`}>
+          {/* Header */}
+          <header className="mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           {/* Title Section */}
           <div className="flex items-center gap-4">
@@ -499,8 +503,12 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
 
             {/* Dashboard Chat */}
             <button
-              onClick={() => setIsChatOpen(true)}
-              className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20"
+              onClick={() => setIsChatOpen(prev => !prev)}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all shadow-lg ${
+                isChatOpen
+                  ? 'bg-slate-700 text-white shadow-slate-700/20 hover:bg-slate-800'
+                  : 'bg-slate-900 text-white shadow-slate-900/20 hover:bg-slate-800'
+              }`}
             >
               <MessageSquareIcon className="w-4 h-4" />
               <span>Chat</span>
@@ -797,6 +805,23 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
           </ReactGridLayout>
         </div>
       )}
+        </div>
+
+        {isChatOpen && (
+          <aside className="w-full lg:w-[20%] lg:sticky lg:top-8 self-start h-[calc(100vh-8rem)]">
+            <DashboardChat
+              isOpen={isChatOpen}
+              onClose={() => setIsChatOpen(false)}
+              apiKey={apiKey}
+              dbConnection={dbConnection}
+              schemaContext={schemaContext}
+              dashboardItems={items}
+              onAddItems={onAddItems}
+              localExecutor={localExecutor}
+            />
+          </aside>
+        )}
+      </div>
 
       {/* SQL Modal with Optimization Suggestions */}
       {showSqlModal && (
@@ -907,17 +932,6 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
         onClose={() => setIsReportModalOpen(false)}
         dashboard={currentDashboard}
         items={items}
-      />
-
-      {/* Dashboard Chat */}
-      <DashboardChat
-        isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
-        apiKey={apiKey}
-        dbConnection={dbConnection}
-        schemaContext={schemaContext}
-        dashboardItems={items}
-        onAddItems={onAddItems}
       />
     </div>
   );

@@ -18,6 +18,7 @@ interface DashboardChatProps {
   schemaContext: string;
   dashboardItems: DashboardItem[];
   onAddItems: (items: DashboardItem[]) => void;
+  localExecutor?: (sql: string) => Promise<any[]>;
 }
 
 const DashboardChat: React.FC<DashboardChatProps> = ({
@@ -27,7 +28,8 @@ const DashboardChat: React.FC<DashboardChatProps> = ({
   dbConnection,
   schemaContext,
   dashboardItems,
-  onAddItems
+  onAddItems,
+  localExecutor
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -35,8 +37,8 @@ const DashboardChat: React.FC<DashboardChatProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const canSend = useMemo(() => {
-    return !!input.trim() && !!apiKey && !!dbConnection && !!schemaContext.trim();
-  }, [input, apiKey, dbConnection, schemaContext]);
+    return !!input.trim() && !!apiKey && !!schemaContext.trim() && (!!dbConnection || !!localExecutor);
+  }, [input, apiKey, dbConnection, schemaContext, localExecutor]);
 
   if (!isOpen) return null;
 
@@ -63,7 +65,7 @@ const DashboardChat: React.FC<DashboardChatProps> = ({
   };
 
   const handleSend = async () => {
-    if (!canSend || !dbConnection) return;
+    if (!canSend) return;
 
     const prompt = input.trim();
     setInput('');
@@ -84,7 +86,8 @@ const DashboardChat: React.FC<DashboardChatProps> = ({
         schemaContext,
         apiKey,
         dbConnection,
-        dashboardItems
+        dashboardItems,
+        localExecutor
       );
 
       const itemsToAdd = convertWidgetsToItems(result.widgets);
@@ -112,80 +115,74 @@ const DashboardChat: React.FC<DashboardChatProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[70]">
-      <div
-        onClick={onClose}
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-      />
-      <div className="absolute inset-y-0 right-0 w-full max-w-xl bg-white shadow-2xl border-l border-slate-200 overflow-hidden flex flex-col animate-in slide-in-from-right-6 duration-300">
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center">
-              <MessageSquareIcon className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-lg font-black text-slate-900">Dashboard Chat</h3>
-              <p className="text-xs text-slate-500 font-medium">Ask for new charts to add to this dashboard</p>
-            </div>
+    <div className="h-full bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden flex flex-col">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-2xl bg-slate-900 text-white flex items-center justify-center">
+            <MessageSquareIcon className="w-5 h-5" />
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-slate-100 text-slate-400">
-            <XIcon className="w-5 h-5" />
-          </button>
+          <div>
+            <h3 className="text-base font-black text-slate-900">Dashboard Chat</h3>
+            <p className="text-[11px] text-slate-500 font-medium">Ask for new charts to add to this dashboard</p>
+          </div>
         </div>
+        <button onClick={onClose} className="p-2 rounded-xl hover:bg-slate-100 text-slate-400">
+          <XIcon className="w-4 h-4" />
+        </button>
+      </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {messages.length === 0 && (
-            <div className="text-sm text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-2xl p-5">
-              Try: "Add a cash flow trend by month" or "Show AP aging by vendor".
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.length === 0 && (
+          <div className="text-sm text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-2xl p-4">
+            Try: "Add a cash flow trend by month" or "Show AP aging by vendor".
+          </div>
+        )}
+
+        {messages.map(message => (
+          <div key={message.id} className={message.role === 'user' ? 'text-right' : 'text-left'}>
+            <div className={`inline-block px-4 py-3 rounded-2xl text-sm font-semibold ${
+              message.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-800'
+            }`}>
+              {message.content}
             </div>
-          )}
-
-          {messages.map(message => (
-            <div key={message.id} className={message.role === 'user' ? 'text-right' : 'text-left'}>
-              <div className={`inline-block px-4 py-3 rounded-2xl text-sm font-semibold ${
-                message.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-800'
-              }`}>
-                {message.content}
+            {message.widgets && message.widgets.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {message.widgets.map((widget, idx) => (
+                  <div key={`${message.id}-${idx}`} className="flex items-center gap-2 text-xs text-slate-600">
+                    {widget.sqlError ? (
+                      <AlertCircleIcon className="w-3.5 h-3.5 text-amber-500" />
+                    ) : (
+                      <CheckCircleIcon className="w-3.5 h-3.5 text-green-500" />
+                    )}
+                    <span>{widget.title}</span>
+                    {widget.sqlError && <span className="text-amber-600">({widget.sqlError})</span>}
+                  </div>
+                ))}
               </div>
-              {message.widgets && message.widgets.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  {message.widgets.map((widget, idx) => (
-                    <div key={`${message.id}-${idx}`} className="flex items-center gap-2 text-xs text-slate-600">
-                      {widget.sqlError ? (
-                        <AlertCircleIcon className="w-3.5 h-3.5 text-amber-500" />
-                      ) : (
-                        <CheckCircleIcon className="w-3.5 h-3.5 text-green-500" />
-                      )}
-                      <span>{widget.title}</span>
-                      {widget.sqlError && <span className="text-amber-600">({widget.sqlError})</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+            )}
+          </div>
+        ))}
+      </div>
 
-        <div className="border-t border-slate-200 p-4">
-          {error && (
-            <div className="mb-3 text-xs text-red-600 font-semibold">{error}</div>
-          )}
-          <div className="flex items-center gap-3">
+      <div className="border-t border-slate-200 p-4">
+        {error && (
+          <div className="mb-3 text-xs text-red-600 font-semibold">{error}</div>
+        )}
+        <div className="flex items-center gap-3">
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={dbConnection ? 'Ask for a new chart...' : 'Connect a database first...'}
-              disabled={!dbConnection || isSending}
+              placeholder={(dbConnection || localExecutor) ? 'Ask for a new chart...' : 'Connect a database or upload Excel first...'}
+              disabled={(!dbConnection && !localExecutor) || isSending}
               className="flex-1 px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 text-sm font-semibold"
             />
-            <button
-              onClick={handleSend}
-              disabled={!canSend || isSending}
-              className="p-3 rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-500/20 disabled:opacity-40"
-            >
-              <SendIcon className="w-4 h-4" />
-            </button>
-          </div>
+          <button
+            onClick={handleSend}
+            disabled={!canSend || isSending}
+            className="p-3 rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-500/20 disabled:opacity-40"
+          >
+            <SendIcon className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </div>

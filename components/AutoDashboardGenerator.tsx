@@ -40,6 +40,7 @@ interface AutoDashboardGeneratorProps {
   dbConnection: DbConnection | null;
   schemaContext: string;
   apiKey: string;
+  localExecutor?: (sql: string) => Promise<any[]>;
 }
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -66,7 +67,8 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
   onDashboardGenerated,
   dbConnection,
   schemaContext,
-  apiKey
+  apiKey,
+  localExecutor
 }) => {
   const [mode, setMode] = useState<'presets' | 'custom'>('presets');
   const [customPrompt, setCustomPrompt] = useState('');
@@ -83,8 +85,8 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
   const [showRefinementInput, setShowRefinementInput] = useState<string | null>(null);
 
   const handleGenerate = async (prompt: string) => {
-    if (!dbConnection) {
-      setError('Please connect to a database first.');
+    if (!dbConnection && !localExecutor) {
+      setError('Please connect to a database or upload an Excel file first.');
       return;
     }
 
@@ -105,7 +107,8 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
         apiKey,
         dbConnection,
         widgetCount,
-        setProgress
+        setProgress,
+        localExecutor
       );
       
       setResult(dashboardResult);
@@ -121,7 +124,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
 
   // Handle regenerating a single failed widget
   const handleRegenerateWidget = async (widget: AutoDashboardWidget, customRefinement?: string) => {
-    if (!dbConnection || !apiKey) return;
+    if ((!dbConnection && !localExecutor) || !apiKey) return;
 
     setRegeneratingWidgetId(widget.id);
     setShowRefinementInput(null);
@@ -132,7 +135,8 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
         schemaContext,
         apiKey,
         dbConnection,
-        customRefinement || refinementPrompt[widget.id]
+        customRefinement || refinementPrompt[widget.id],
+        localExecutor
       );
 
       // Update the result with the regenerated widget
@@ -245,10 +249,10 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
               </div>
 
               {/* Connection Status */}
-              {!dbConnection && (
+              {!dbConnection && !localExecutor && (
                 <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3">
                   <AlertCircleIcon className="w-5 h-5 text-amber-500" />
-                  <span className="text-amber-700 text-sm">Connect to a database first to generate dashboards</span>
+                  <span className="text-amber-700 text-sm">Connect to a database or upload Excel to generate dashboards</span>
                 </div>
               )}
 
@@ -532,7 +536,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
                 }}
                 disabled={
                   isGenerating || 
-                  !dbConnection || 
+                  (!dbConnection && !localExecutor) || 
                   (mode === 'presets' && !selectedPreset) ||
                   (mode === 'custom' && !customPrompt.trim())
                 }

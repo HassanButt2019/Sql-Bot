@@ -997,9 +997,7 @@ app.post('/api/dashboard-chat', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Database schema is required.' });
   }
 
-  if (!dbConnection) {
-    return res.status(400).json({ success: false, error: 'Database connection is required.' });
-  }
+  const hasDbConnection = !!dbConnection;
 
   const sanitizedItems = (dashboardItems || []).map(item => ({
     title: item.title,
@@ -1088,7 +1086,7 @@ RESPONSE FORMAT (JSON):
       let chartData = [];
       let sqlError = null;
 
-      if (widget.sql) {
+      if (hasDbConnection && widget.sql) {
         try {
           const config = {
             host: dbConnection.host,
