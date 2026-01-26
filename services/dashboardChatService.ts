@@ -1,19 +1,14 @@
-import { DashboardItem, DbConnection } from '../types';
+import { ChartConfig, DashboardItem, DbConnection } from '../types';
 import { limitChartData } from './excelDuckdbService';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { ApiClient, defaultApiClient } from './apiClient';
+import { buildDbConnectionInfo, PasswordStore } from './dbConnectionInfo';
+import { getCapabilityToken } from './capabilitiesService';
 
 export interface DashboardChatWidget {
   title: string;
   sql: string;
   explanation: string;
-  chartConfig: {
-    type: string;
-    xAxis: string;
-    yAxis: string;
-    title: string;
-    colorScheme?: string;
-  };
+  chartConfig: ChartConfig;
   chartData: any[];
   sqlError?: string;
 }
@@ -29,23 +24,19 @@ export async function queryDashboardChat(
   apiKey: string,
   dbConnection: DbConnection | null,
   dashboardItems: DashboardItem[],
-  localExecutor?: (sql: string) => Promise<any[]>
+  localExecutor?: (sql: string) => Promise<any[]>,
+  deps: { apiClient?: ApiClient; passwordStore?: PasswordStore } = {}
 ): Promise<DashboardChatResponse> {
-  const dbConnectionInfo = dbConnection ? {
-    host: dbConnection.host,
-    port: dbConnection.port,
-    username: dbConnection.username,
-    password: localStorage.getItem(`sqlmind_db_password_${dbConnection.id}`) || '',
-    database: dbConnection.database,
-    dialect: dbConnection.dialect,
-    connectionString: dbConnection.connectionString,
-    useConnectionString: dbConnection.useConnectionString
-  } : null;
+  const dbConnectionInfo = buildDbConnectionInfo(dbConnection, deps.passwordStore);
+  const apiClient = deps.apiClient ?? defaultApiClient;
+  const capabilityToken = await getCapabilityToken('dashboard.update', {
+    apiClient,
+    connectorIds: dbConnection?.id ? [dbConnection.id] : []
+  });
 
-  const response = await fetch(`${API_BASE_URL}/api/dashboard-chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  const result = await apiClient.post<{ success: boolean; data: DashboardChatResponse; error?: string }>(
+    '/api/dashboard-chat',
+    {
       prompt,
       schemaContext,
       apiKey,
@@ -55,10 +46,9 @@ export async function queryDashboardChat(
         sql: item.sql,
         chartConfig: item.chartConfig
       }))
-    })
-  });
-
-  const result = await response.json();
+    },
+    { headers: { 'x-capability-token': capabilityToken } }
+  );
   if (!result.success) {
     throw new Error(result.error || 'Failed to get dashboard chat response');
   }

@@ -1,7 +1,7 @@
 import { Message, DbConnection } from "../types";
 import { limitChartData } from "./excelDuckdbService";
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { ApiClient, defaultApiClient } from "./apiClient";
+import { buildDbConnectionInfo, PasswordStore } from "./dbConnectionInfo";
 
 export async function queryModel(
   prompt: string, 
@@ -9,37 +9,33 @@ export async function queryModel(
   apiKey: string,
   dbConnection: DbConnection | null,
   onChunk: (text: string) => void,
-  localExecutor?: (sql: string) => Promise<any[]>
+  localExecutor?: (sql: string) => Promise<any[]>,
+  deps: { apiClient?: ApiClient; passwordStore?: PasswordStore } = {}
 ): Promise<Partial<Message>> {
   onChunk('Analyzing your query...');
   
   try {
     // Prepare database connection info for SQL execution
-    const dbConnectionInfo = dbConnection ? {
-      host: dbConnection.host,
-      port: dbConnection.port,
-      username: dbConnection.username,
-      password: localStorage.getItem(`sqlmind_db_password_${dbConnection.id}`) || '',
-      database: dbConnection.database,
-      dialect: dbConnection.dialect,
-      connectionString: dbConnection.connectionString,
-      useConnectionString: dbConnection.useConnectionString
-    } : null;
+    const dbConnectionInfo = buildDbConnectionInfo(dbConnection, deps.passwordStore);
+    const apiClient = deps.apiClient ?? defaultApiClient;
 
-    const response = await fetch(`${API_BASE_URL}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        prompt,
-        schemaContext: schema,
-        apiKey,
-        dbConnection: dbConnectionInfo
-      }),
+    const result = await apiClient.post<{
+      success: boolean;
+      data: {
+        content?: string;
+        sql?: string;
+        explanation?: string;
+        chartConfig?: Message['chartConfig'];
+        chartData?: any[];
+        sqlError?: string;
+      };
+      error?: string;
+    }>('/api/chat', {
+      prompt,
+      schemaContext: schema,
+      apiKey,
+      dbConnection: dbConnectionInfo
     });
-
-    const result = await response.json();
     
     if (!result.success) {
       throw new Error(result.error || 'Failed to get response from AI');

@@ -56,7 +56,7 @@ const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({ isOpen, onClose, them
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95">
         {/* Header */}
-        <div className="bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-4 text-white flex items-center justify-between">
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-4 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
             <PaletteIcon className="w-5 h-5" />
             <h2 className="text-lg font-bold">Theme Customization</h2>
@@ -83,7 +83,7 @@ const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({ isOpen, onClose, them
                   onClick={() => handleModeChange(mode)}
                   className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 transition-all ${
                     localTheme.mode === mode
-                      ? 'border-violet-500 bg-violet-50 text-violet-700'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
                       : 'border-slate-200 text-slate-500 hover:border-slate-300'
                   }`}
                 >
@@ -132,7 +132,7 @@ const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({ isOpen, onClose, them
                   onClick={() => handlePaletteChange(palette.colors)}
                   className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
                     JSON.stringify(localTheme.chartPalette) === JSON.stringify(palette.colors)
-                      ? 'border-violet-500 bg-violet-50'
+                      ? 'border-blue-500 bg-blue-50'
                       : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
@@ -149,7 +149,7 @@ const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({ isOpen, onClose, them
                     {palette.name}
                   </span>
                   {JSON.stringify(localTheme.chartPalette) === JSON.stringify(palette.colors) && (
-                    <CheckIcon className="w-4 h-4 text-violet-600" />
+                    <CheckIcon className="w-4 h-4 text-blue-600" />
                   )}
                 </button>
               ))}
@@ -194,7 +194,7 @@ const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({ isOpen, onClose, them
           </button>
           <button
             onClick={handleApply}
-            className="px-5 py-2.5 bg-violet-600 text-white font-semibold rounded-xl hover:bg-violet-700 transition-colors"
+            className="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors"
           >
             Apply Theme
           </button>

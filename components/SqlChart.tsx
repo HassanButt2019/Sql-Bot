@@ -381,7 +381,7 @@ const SqlChart: React.FC<SqlChartProps> = ({
         <div>
           <h3 className="text-[9px] font-black text-slate-400 tracking-widest uppercase mb-0.5">{title}</h3>
           <div className="flex items-center gap-1.5">
-            <div className={`w-1.5 h-1.5 rounded-full ${type === 'pie' ? 'bg-indigo-500' : 'bg-blue-500'} animate-pulse`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${type === 'pie' ? 'bg-blue-500' : 'bg-blue-500'} animate-pulse`} />
             <p className="text-[9px] font-bold text-slate-500 uppercase tracking-tight">Live Intelligence Analysis</p>
           </div>
         </div>

@@ -272,7 +272,7 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
                   <button
                     onClick={() => handleRegenerate(item.id, item.sql!, refinementText)}
                     disabled={isRegenerating || !refinementText.trim()}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isRegenerating ? (
                       <>
@@ -466,7 +466,7 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           {/* Title Section */}
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
               <LayoutGridIcon className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -605,7 +605,7 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
                       <button
                         onClick={() => setShowComparisonFor(showComparisonFor === item.id ? null : item.id)}
                         title="Comparative Analysis"
-                        className={`p-2 ${showComparisonFor === item.id ? 'bg-indigo-100 text-indigo-700' : 'bg-white/90 hover:bg-white text-slate-500 hover:text-slate-700'} rounded-lg shadow-sm border border-slate-200 transition-all`}
+                        className={`p-2 ${showComparisonFor === item.id ? 'bg-blue-100 text-blue-700' : 'bg-white/90 hover:bg-white text-slate-500 hover:text-slate-700'} rounded-lg shadow-sm border border-slate-200 transition-all`}
                       >
                         <GitCompareIcon className="w-4 h-4" />
                       </button>
@@ -675,7 +675,7 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
                           <div className="space-y-3">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
-                                <GitCompareIcon className="w-4 h-4 text-indigo-600" />
+                                <GitCompareIcon className="w-4 h-4 text-blue-600" />
                                 <h4 className="font-bold text-sm text-slate-800">Period Comparison</h4>
                               </div>
                               <button 
@@ -829,7 +829,7 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <div className="flex items-center gap-3">
-                <CodeIcon className="w-5 h-5 text-indigo-600" />
+                <CodeIcon className="w-5 h-5 text-blue-600" />
                 <h3 className="font-bold text-lg">SQL Query & Optimization</h3>
               </div>
               <button onClick={() => setShowSqlModal(null)} className="p-2 hover:bg-slate-100 rounded-xl">
@@ -843,7 +843,7 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
                 <div className="px-4 py-2 bg-slate-900 border-b border-slate-800">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Generated SQL</span>
                 </div>
-                <pre className="p-4 text-sm text-indigo-300 font-mono overflow-x-auto whitespace-pre-wrap">
+                <pre className="p-4 text-sm text-blue-300 font-mono overflow-x-auto whitespace-pre-wrap">
                   {showSqlModal.sql}
                 </pre>
               </div>
@@ -878,7 +878,7 @@ const EnhancedDashboard: React.FC<EnhancedDashboardProps> = ({
               </button>
               <button
                 onClick={() => setShowSqlModal(null)}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors"
+                className="px-4 py-2 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors"
               >
                 Close
               </button>

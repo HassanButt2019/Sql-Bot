@@ -1,20 +1,15 @@
-import { DbConnection, DashboardItem } from '../types';
+import { ChartConfig, DbConnection, DashboardItem } from '../types';
 import { limitChartData } from './excelDuckdbService';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { ApiClient, defaultApiClient } from './apiClient';
+import { buildDbConnectionInfo, PasswordStore } from './dbConnectionInfo';
+import { getCapabilityToken } from './capabilitiesService';
 
 export interface AutoDashboardWidget {
   id: string;
   title: string;
   sql: string;
   explanation: string;
-  chartConfig: {
-    type: 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed';
-    xAxis: string;
-    yAxis: string;
-    title: string;
-    colorScheme?: string;
-  };
+  chartConfig: ChartConfig;
   chartData: any[];
   sqlError?: string;
   addedAt: number;
@@ -154,7 +149,8 @@ export async function generateAutoDashboard(
   dbConnection: DbConnection | null,
   widgetCount: number = 15,
   onProgress?: (message: string) => void,
-  localExecutor?: (sql: string) => Promise<any[]>
+  localExecutor?: (sql: string) => Promise<any[]>,
+  deps: { apiClient?: ApiClient; passwordStore?: PasswordStore } = {}
 ): Promise<AutoDashboardResult> {
   
   onProgress?.('🤖 AI is analyzing your request...');
@@ -168,35 +164,27 @@ export async function generateAutoDashboard(
   }
 
   // Prepare database connection info
-  const dbConnectionInfo = dbConnection ? {
-    host: dbConnection.host,
-    port: dbConnection.port,
-    username: dbConnection.username,
-    password: localStorage.getItem(`sqlmind_db_password_${dbConnection.id}`) || '',
-    database: dbConnection.database,
-    dialect: dbConnection.dialect,
-    connectionString: dbConnection.connectionString,
-    useConnectionString: dbConnection.useConnectionString
-  } : null;
+  const dbConnectionInfo = buildDbConnectionInfo(dbConnection, deps.passwordStore);
+  const apiClient = deps.apiClient ?? defaultApiClient;
+  const capabilityToken = await getCapabilityToken('dashboard.generate', {
+    apiClient,
+    connectorIds: dbConnection?.id ? [dbConnection.id] : []
+  });
 
   onProgress?.('📊 Generating dashboard structure...');
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/generate-dashboard`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const result = await apiClient.post<{ success: boolean; data: AutoDashboardResult; error?: string }>(
+      '/api/generate-dashboard',
+      {
         prompt,
         schemaContext,
         apiKey,
         dbConnection: dbConnectionInfo,
         widgetCount
-      }),
-    });
-
-    const result = await response.json();
+      },
+      { headers: { 'x-capability-token': capabilityToken } }
+    );
     
     if (!result.success) {
       throw new Error(result.error || 'Failed to generate dashboard');
@@ -248,7 +236,8 @@ export async function regenerateSingleWidget(
   apiKey: string,
   dbConnection: DbConnection | null,
   refinementPrompt?: string,
-  localExecutor?: (sql: string) => Promise<any[]>
+  localExecutor?: (sql: string) => Promise<any[]>,
+  deps: { apiClient?: ApiClient; passwordStore?: PasswordStore } = {}
 ): Promise<AutoDashboardWidget> {
   
   if (!dbConnection && !localExecutor) {
@@ -256,34 +245,26 @@ export async function regenerateSingleWidget(
   }
 
   // Prepare database connection info
-  const dbConnectionInfo = dbConnection ? {
-    host: dbConnection.host,
-    port: dbConnection.port,
-    username: dbConnection.username,
-    password: localStorage.getItem(`sqlmind_db_password_${dbConnection.id}`) || '',
-    database: dbConnection.database,
-    dialect: dbConnection.dialect,
-    connectionString: dbConnection.connectionString,
-    useConnectionString: dbConnection.useConnectionString
-  } : null;
+  const dbConnectionInfo = buildDbConnectionInfo(dbConnection, deps.passwordStore);
+  const apiClient = deps.apiClient ?? defaultApiClient;
+  const capabilityToken = await getCapabilityToken('dashboard.update', {
+    apiClient,
+    connectorIds: dbConnection?.id ? [dbConnection.id] : []
+  });
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/regenerate-widget`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const result = await apiClient.post<{ success: boolean; data: AutoDashboardWidget; error?: string }>(
+      '/api/regenerate-widget',
+      {
         widget: failedWidget,
         schemaContext,
         apiKey,
         dbConnection: dbConnectionInfo,
         refinementPrompt,
         originalError: failedWidget.sqlError
-      }),
-    });
-
-    const result = await response.json();
+      },
+      { headers: { 'x-capability-token': capabilityToken } }
+    );
     
     if (!result.success) {
       throw new Error(result.error || 'Failed to regenerate widget');

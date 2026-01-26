@@ -1,6 +1,5 @@
 import { TableInfo, DbConnectionConfig } from "../types";
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { ApiClient, defaultApiClient } from './apiClient';
 
 export interface IntrospectionResult {
   success: boolean;
@@ -20,18 +19,12 @@ export interface ConnectionTestResult {
 }
 
 // Test database connection without introspecting
-export async function testDatabaseConnection(config: DbConnectionConfig): Promise<ConnectionTestResult> {
+export async function testDatabaseConnection(
+  config: DbConnectionConfig,
+  apiClient: ApiClient = defaultApiClient
+): Promise<ConnectionTestResult> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/test-connection`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(config),
-    });
-
-    const data = await response.json();
-    return data;
+    return await apiClient.post<ConnectionTestResult>('/api/test-connection', config);
   } catch (error) {
     // If backend is not available, fall back to mock mode
     console.warn('Backend not available, using mock mode');
@@ -40,17 +33,12 @@ export async function testDatabaseConnection(config: DbConnectionConfig): Promis
 }
 
 // Introspect database and get table schemas
-export async function introspectDatabase(config: DbConnectionConfig): Promise<TableInfo[]> {
+export async function introspectDatabase(
+  config: DbConnectionConfig,
+  apiClient: ApiClient = defaultApiClient
+): Promise<TableInfo[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/introspect`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(config),
-    });
-
-    const data: IntrospectionResult = await response.json();
+    const data = await apiClient.post<IntrospectionResult>('/api/introspect', config);
     
     if (data.success && data.tables) {
       return data.tables;
@@ -65,17 +53,16 @@ export async function introspectDatabase(config: DbConnectionConfig): Promise<Ta
 }
 
 // Execute a SQL query against the database
-export async function executeQuery(config: DbConnectionConfig, query: string): Promise<any[]> {
+export async function executeQuery(
+  config: DbConnectionConfig,
+  query: string,
+  apiClient: ApiClient = defaultApiClient
+): Promise<any[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/execute-query`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ ...config, query }),
-    });
-
-    const data = await response.json();
+    const data = await apiClient.post<{ success: boolean; data: any[]; error?: string }>(
+      '/api/execute-query',
+      { ...config, query }
+    );
     
     if (data.success) {
       return data.data;

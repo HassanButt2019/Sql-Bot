@@ -1,5 +1,7 @@
 export type LLMModel = 'gemini-3-pro' | 'gemini-3-flash' | 'claude-3-5' | 'gpt-4o';
 export type DbDialect = 'postgresql' | 'mysql' | 'sqlserver' | 'sqlite' | 'shopify' | 'duckdb';
+export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed' | 'kpi' | 'gauge' | 'heatmap' | 'geo';
+export type ChartColorScheme = 'default' | 'performance' | 'categorical' | 'warm' | 'cool' | 'trust' | 'growth' | 'alert' | 'heat';
 
 export interface TableInfo {
   name: string;
@@ -24,6 +26,17 @@ export interface DbConnection {
   useConnectionString?: boolean;
   isTemporary?: boolean;
   sourceType?: 'database' | 'excel';
+}
+
+export interface DbConnectionConfig {
+  host: string;
+  port: string;
+  username: string;
+  password?: string;
+  database: string;
+  dialect: DbDialect;
+  connectionString?: string;
+  useConnectionString?: boolean;
 }
 
 export interface ExcelColumn {
@@ -59,15 +72,35 @@ export interface Message {
   anomalies?: string[];
   forecastData?: any[];
   chartData?: any[];
-  chartConfig?: {
-    type: 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed';
-    xAxis: string;
-    yAxis: string;
-    yAxisSecondary?: string;
-    title: string;
-    colorScheme?: 'default' | 'performance' | 'categorical' | 'warm' | 'cool' | 'trust' | 'growth' | 'alert';
-    customColors?: string[];
-    showLabels?: boolean;
+  chartConfig?: ChartConfig;
+}
+
+export interface ChartConfig {
+  type: ChartType;
+  xAxis: string;
+  yAxis: string;
+  yAxisSecondary?: string;
+  title: string;
+  colorScheme?: ChartColorScheme;
+  customColors?: string[];
+  showLabels?: boolean;
+  kpiConfig?: {
+    value: number;
+    label?: string;
+    format?: string;
+    trend?: number;
+  };
+  gaugeConfig?: {
+    min?: number;
+    max?: number;
+    thresholds?: number[];
+  };
+  heatmapConfig?: {
+    xCategories?: string[];
+    yCategories?: string[];
+  };
+  geoConfig?: {
+    mapType?: 'world' | 'usa' | string;
   };
 }
 
@@ -82,7 +115,7 @@ export interface Conversation {
 export interface DashboardItem {
   id: string;
   title: string;
-  chartConfig: NonNullable<Message['chartConfig']>;
+  chartConfig: ChartConfig;
   chartData: any[];
   addedAt: number;
   colSpan: 4 | 6 | 12;

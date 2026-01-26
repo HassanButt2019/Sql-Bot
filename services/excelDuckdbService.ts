@@ -107,6 +107,21 @@ export const registerExcelSheets = async (
 };
 
 export const executeDuckDbQuery = async (sql: string) => {
+  const normalized = sql
+    .replace(/--.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .trim()
+    .toLowerCase();
+  const forbidden = ['insert', 'update', 'delete', 'drop', 'alter', 'create', 'truncate', 'merge', 'replace'];
+  if (forbidden.some(keyword => new RegExp(`\\b${keyword}\\b`, 'i').test(normalized))) {
+    throw new Error('Read-only mode: only SELECT queries are allowed.');
+  }
+  if (!(normalized.startsWith('select') || normalized.startsWith('with') || normalized.startsWith('show') || normalized.startsWith('describe') || normalized.startsWith('explain'))) {
+    throw new Error('Read-only mode: only SELECT queries are allowed.');
+  }
+  if (!/\blimit\s+\d+/i.test(sql)) {
+    sql = `${sql.replace(/;\s*$/g, '')} LIMIT 1000`;
+  }
   const { conn } = await getDuckDb();
   const result = await conn.query(sql);
   return arrowTableToObjects(result);

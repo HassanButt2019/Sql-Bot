@@ -56,7 +56,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   sales: 'bg-green-500',
   finance: 'bg-blue-500',
   operations: 'bg-orange-500',
-  customers: 'bg-purple-500',
+  customers: 'bg-blue-500',
   products: 'bg-pink-500',
   general: 'bg-slate-500'
 };
@@ -198,7 +198,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="bg-gradient-to-r from-violet-600 to-indigo-600 px-8 py-6 text-white">
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-8 py-6 text-white">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
@@ -206,7 +206,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
               </div>
               <div>
                 <h2 className="text-2xl font-bold">Auto-Generate Dashboard</h2>
-                <p className="text-violet-200 text-sm">AI creates multiple widgets from a single prompt</p>
+                <p className="text-blue-200 text-sm">AI creates multiple widgets from a single prompt</p>
               </div>
             </div>
             <button 
@@ -271,7 +271,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
                         disabled={isGenerating}
                         className={`p-5 rounded-2xl border-2 text-left transition-all ${
                           selectedPreset?.id === preset.id
-                            ? 'border-violet-500 bg-violet-50'
+                            ? 'border-blue-500 bg-blue-50'
                             : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                         } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
@@ -287,7 +287,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
                             <p className="text-sm text-slate-500 mt-1">{preset.description}</p>
                           </div>
                           {selectedPreset?.id === preset.id && (
-                            <CheckCircleIcon className="w-6 h-6 text-violet-500" />
+                            <CheckCircleIcon className="w-6 h-6 text-blue-500" />
                           )}
                         </div>
                       </button>
@@ -307,7 +307,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
                       value={customPrompt}
                       onChange={(e) => setCustomPrompt(e.target.value)}
                       placeholder="e.g., Create a sales performance dashboard showing monthly revenue trends, top products by sales, regional distribution, and order status breakdown"
-                      className="w-full h-32 px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-violet-500 focus:border-violet-500 resize-none"
+                      className="w-full h-32 px-4 py-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
                       disabled={isGenerating}
                     />
                   </div>
@@ -324,7 +324,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
                             onClick={() => setWidgetCount(count)}
                             className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
                               widgetCount === count
-                                ? 'bg-violet-500 text-white'
+                                ? 'bg-blue-600 text-white'
                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                             }`}
                           >
@@ -350,7 +350,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
                         <button
                           key={example}
                           onClick={() => setCustomPrompt(example)}
-                          className="px-3 py-1.5 bg-white border border-slate-200 rounded-full text-xs text-slate-600 hover:bg-violet-50 hover:border-violet-300 transition-colors"
+                          className="px-3 py-1.5 bg-white border border-slate-200 rounded-full text-xs text-slate-600 hover:bg-blue-50 hover:border-blue-300 transition-colors"
                         >
                           {example}
                         </button>
@@ -370,12 +370,12 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
 
               {/* Progress Display */}
               {isGenerating && (
-                <div className="mt-6 p-6 bg-violet-50 border border-violet-200 rounded-2xl">
+                <div className="mt-6 p-6 bg-blue-50 border border-blue-200 rounded-2xl">
                   <div className="flex items-center gap-4">
-                    <Loader2Icon className="w-6 h-6 text-violet-600 animate-spin" />
+                    <Loader2Icon className="w-6 h-6 text-blue-600 animate-spin" />
                     <div>
-                      <p className="font-semibold text-violet-900">Generating Dashboard...</p>
-                      <p className="text-sm text-violet-600">{progress}</p>
+                      <p className="font-semibold text-blue-900">Generating Dashboard...</p>
+                      <p className="text-sm text-blue-600">{progress}</p>
                     </div>
                   </div>
                 </div>
@@ -408,7 +408,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white ${
-                            widget.sqlError ? 'bg-red-400' : 'bg-violet-500'
+                            widget.sqlError ? 'bg-red-400' : 'bg-blue-500'
                           }`}>
                             {widget.chartConfig.type === 'pie' ? (
                               <PieChartIcon className="w-4 h-4" />
@@ -540,7 +540,7 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
                   (mode === 'presets' && !selectedPreset) ||
                   (mode === 'custom' && !customPrompt.trim())
                 }
-                className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-semibold rounded-xl hover:from-violet-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-violet-500/25"
+                className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/25"
               >
                 {isGenerating ? (
                   <>
