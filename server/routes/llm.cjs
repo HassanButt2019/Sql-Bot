@@ -26,7 +26,7 @@ function buildDbConfig(dbConnection) {
 
 router.post('/chat', requireAuth, requireTenant, requirePermission('chat:use'), async (req, res) => {
   const startedAt = Date.now();
-  const { prompt, schemaContext, apiKey, dbConnection } = req.body;
+  const { prompt, schemaContext, apiKey, dbConnection, sourceType = 'sql', profileData } = req.body;
   const openaiApiKey = (apiKey && apiKey.trim()) ? apiKey.trim() : process.env.OPENAI_API_KEY;
   const userId = req.user?.id;
   const orgId = req.auth?.tenant?.orgId || null;
@@ -49,6 +49,9 @@ Given the database schema provided below, translate the user's natural language 
 SCHEMA CONTEXT:
 ${schemaContext}
 
+DATA PROFILE (for accuracy; use if helpful):
+${profileData ? JSON.stringify(profileData).slice(0, 3000) : 'None'}
+
 SEMANTIC HINTS (optional, use only if helpful and consistent with schema):
 ${semanticHints || 'None'}
 
@@ -60,6 +63,16 @@ IMPORTANT SQL RULES:
 5. Use aggregations (COUNT, SUM, AVG, etc.) for chart-friendly data.
 6. For categorical charts, return TOP 10-12 categories (ORDER BY metric DESC + LIMIT).
 7. For time series, bucket dates using DATE_TRUNC (day/week/month/quarter/year). Default to month if the user doesn't specify.
+8. If your SELECT would otherwise return only one column (e.g., a list of names), add a second numeric column using COUNT(*) AS value and GROUP BY the xAxis column.
+9. Ensure chartConfig.yAxis is a numeric column present in the SQL result.
+
+EXCEL/DUCKDB-SPECIFIC RULES (if source type is excel):
+- Treat columns as text unless clearly numeric/date; use TRY_CAST for numeric/date operations.
+- Use COALESCE(TRY_CAST(col AS DOUBLE), 0) for numeric aggregations.
+- For dates stored as text, use TRY_CAST(col AS DATE) or STRPTIME with a clear format.
+- Quote identifiers that include spaces or special characters using double quotes.
+
+SOURCE TYPE: ${sourceType}
 
 VISUALIZATION RULES:
 1. Select the most effective chart type:
@@ -174,7 +187,7 @@ Do not wrap the JSON in markdown blocks.`;
 
 router.post('/generate-dashboard', requireAuth, requireTenant, requirePermission('dashboards:create'), requireCapability('dashboard.generate'), async (req, res) => {
   const startedAt = Date.now();
-  const { prompt, schemaContext, apiKey, dbConnection, widgetCount = 8 } = req.body;
+  const { prompt, schemaContext, apiKey, dbConnection, widgetCount = 8, sourceType = 'sql', profileData } = req.body;
   const userId = req.user?.id;
   const orgId = req.auth?.tenant?.orgId || null;
   const plan = getPlanForUser(userId);
@@ -208,6 +221,9 @@ router.post('/generate-dashboard', requireAuth, requireTenant, requirePermission
 
 DATABASE SCHEMA:
 ${schemaContext}
+
+DATA PROFILE (for accuracy; use if helpful):
+${profileData ? JSON.stringify(profileData).slice(0, 3000) : 'None'}
 
 SEMANTIC HINTS (optional, use only if helpful and consistent with schema):
 ${semanticHints || 'None'}
@@ -263,6 +279,14 @@ ADVANCED DASHBOARD GUIDELINES:
 - Always optimize for readability and business insight: avoid clutter, use clear labels, and prioritize actionable metrics.
 - If the schema includes user, product, or transaction tables, prioritize widgets that show trends, distributions, and top performers.
 - If possible, include at least one widget that highlights anomalies, outliers, or recent changes.
+
+EXCEL/DUCKDB-SPECIFIC RULES (if source type is excel):
+- Treat columns as text unless clearly numeric/date; use TRY_CAST for numeric/date operations.
+- Use COALESCE(TRY_CAST(col AS DOUBLE), 0) for numeric aggregations.
+- For dates stored as text, use TRY_CAST(col AS DATE) or STRPTIME with a clear format.
+- Quote identifiers that include spaces or special characters using double quotes.
+
+SOURCE TYPE: ${sourceType}
 
 RESPONSE FORMAT (JSON):
 {
@@ -407,7 +431,7 @@ Do not wrap JSON in markdown. Return only valid JSON.
 // - Removes client-supplied apiKey (uses server env only)
 router.post('/dashboard-chat', requireAuth, requireTenant, requirePermission('chat:use'), requireCapability('dashboard.update'), async (req, res) => {
   const startedAt = Date.now();
-  const { prompt, schemaContext, apiKey, dbConnection, dashboardItems = [] } = req.body;
+  const { prompt, schemaContext, apiKey, dbConnection, dashboardItems = [], sourceType = 'sql', profileData } = req.body;
   const userId = req.user?.id;
   const orgId = req.auth?.tenant?.orgId || null;
   const plan = getPlanForUser(userId);
@@ -560,6 +584,9 @@ router.post('/dashboard-chat', requireAuth, requireTenant, requirePermission('ch
 DATABASE SCHEMA:
 ${schemaContext}
 
+DATA PROFILE (for accuracy; use if helpful):
+${profileData ? JSON.stringify(profileData).slice(0, 3000) : 'None'}
+
 SEMANTIC HINTS (optional; use only if consistent with schema):
 ${semanticHints || 'None'}
 
@@ -587,6 +614,14 @@ SQL RULES:
 - For time series: DATE_TRUNC day/week/month/quarter/year (default month).
 - Use COALESCE for aggregations and NULLIF for division when needed.
 - KPI widgets MUST return one row, one numeric value (with a clear alias).
+
+EXCEL/DUCKDB-SPECIFIC RULES (if source type is excel):
+- Treat columns as text unless clearly numeric/date; use TRY_CAST for numeric/date operations.
+- Use COALESCE(TRY_CAST(col AS DOUBLE), 0) for numeric aggregations.
+- For dates stored as text, use TRY_CAST(col AS DATE) or STRPTIME with a clear format.
+- Quote identifiers that include spaces or special characters using double quotes.
+
+SOURCE TYPE: ${sourceType}
 
 CHART RULES:
 - bar: categorical comparisons
@@ -805,7 +840,7 @@ Return ONLY the widget JSON: {title, sql, explanation, chartConfig}.`;
 
 router.post('/regenerate-widget', requireAuth, requireTenant, requirePermission('dashboards:update'), requireCapability('dashboard.update'), async (req, res) => {
   const startedAt = Date.now();
-  const { widget, schemaContext, apiKey, dbConnection, refinementPrompt, originalError } = req.body;
+  const { widget, schemaContext, apiKey, dbConnection, refinementPrompt, originalError, sourceType = 'sql', profileData } = req.body;
 
   const openaiApiKey = (apiKey && apiKey.trim()) ? apiKey.trim() : process.env.OPENAI_API_KEY;
 
@@ -824,6 +859,9 @@ router.post('/regenerate-widget', requireAuth, requireTenant, requirePermission(
 
 DATABASE SCHEMA:
 ${schemaContext}
+
+DATA PROFILE (for accuracy; use if helpful):
+${profileData ? JSON.stringify(profileData).slice(0, 3000) : 'None'}
 
 SEMANTIC HINTS (optional, use only if helpful and consistent with schema):
 ${semanticHints || 'None'}
@@ -858,6 +896,14 @@ RESPONSE FORMAT (JSON):
     "colorScheme": "default"
   }
 }
+
+EXCEL/DUCKDB-SPECIFIC RULES (if source type is excel):
+- Treat columns as text unless clearly numeric/date; use TRY_CAST for numeric/date operations.
+- Use COALESCE(TRY_CAST(col AS DOUBLE), 0) for numeric aggregations.
+- For dates stored as text, use TRY_CAST(col AS DATE) or STRPTIME with a clear format.
+- Quote identifiers that include spaces or special characters using double quotes.
+
+SOURCE TYPE: ${sourceType}
 
 Return only valid JSON without markdown blocks.`;
 

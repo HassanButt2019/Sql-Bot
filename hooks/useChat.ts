@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Conversation, DbConnection, Message } from '../types';
 import { queryModel } from '../services/llmRouter';
+import { buildSchemaProfile } from '../services/schemaProfile';
 
 interface UseChatArgs {
   conversations: Conversation[];
@@ -54,6 +55,14 @@ export function useChat(args: UseChatArgs) {
       args.setActiveTab('connections');
       return;
     }
+    let profileData: any = undefined;
+    if (args.isExcelConnection && args.localExecutor) {
+      try {
+        profileData = await buildSchemaProfile(schemaContext, args.localExecutor);
+      } catch {
+        profileData = undefined;
+      }
+    }
 
     const userMessage: Message = { id: Date.now().toString(), role: 'user', content: userInput, timestamp: Date.now() };
     const botMessagePlaceholder: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: 'Analyzing schema...', timestamp: Date.now() };
@@ -71,7 +80,8 @@ export function useChat(args: UseChatArgs) {
         (chunkText) => {
           args.setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, content: chunkText } : m) } : c));
         },
-        args.localExecutor
+        args.localExecutor,
+        { sourceType: args.isExcelConnection ? 'excel' : 'sql', profileData }
       );
 
       args.setConversations(prev => prev.map(c => c.id === targetId ? { ...c, messages: c.messages.map(m => m.id === botMessagePlaceholder.id ? { ...m, ...result, content: result.content || 'Report generated.' } : m) } : c));

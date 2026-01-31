@@ -139,14 +139,18 @@ export function useExcelWorkbook(deps: UseExcelWorkbookDeps): UseExcelWorkbookRe
         const maxCols = Math.max(headerRow.length, ...rows.slice(1).map(row => row.length), 0);
         const rawColumns = Array.from({ length: maxCols || headerRow.length || 1 }).map((_, idx) => {
           const value = headerRow[idx];
-          return value ? String(value) : `column_${idx + 1}`;
+          return value ? String(value).trim() : '';
         });
-        const columnNames = ensureUniqueIdentifiers(rawColumns);
+        const includedIndexes = rawColumns
+          .map((name, idx) => ({ name: String(name || '').trim(), idx }))
+          .filter(entry => entry.name.length > 0);
+        const columnNames = ensureUniqueIdentifiers(includedIndexes.map(entry => entry.name));
 
         const data = rows.slice(1).map((row) => {
           const record: Record<string, any> = {};
           columnNames.forEach((col, colIndex) => {
-            record[col] = row?.[colIndex] ?? null;
+            const sourceIndex = includedIndexes[colIndex]?.idx ?? colIndex;
+            record[col] = row?.[sourceIndex] ?? null;
           });
           return record;
         });
@@ -154,7 +158,7 @@ export function useExcelWorkbook(deps: UseExcelWorkbookDeps): UseExcelWorkbookRe
         const columns: ExcelColumn[] = columnNames.map((col, colIndex) => ({
           id: `${tableNames[index]}-${colIndex}-${Date.now()}`,
           name: col,
-          originalName: rawColumns[colIndex],
+          originalName: includedIndexes[colIndex]?.name || col,
           included: true
         }));
 

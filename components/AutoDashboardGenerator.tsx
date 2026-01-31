@@ -9,6 +9,7 @@ import {
   AutoDashboardWidget,
   regenerateSingleWidget
 } from '../services/autoDashboardService';
+import { buildSchemaProfile } from '../services/schemaProfile';
 import {
   SparklesIcon,
   LayoutDashboardIcon,
@@ -101,6 +102,14 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
     setResult(null);
 
     try {
+      let profileData: any = undefined;
+      if (!dbConnection && localExecutor) {
+        try {
+          profileData = await buildSchemaProfile(schemaContext, localExecutor);
+        } catch {
+          profileData = undefined;
+        }
+      }
       const dashboardResult = await generateAutoDashboard(
         prompt,
         schemaContext,
@@ -108,7 +117,8 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
         dbConnection,
         widgetCount,
         setProgress,
-        localExecutor
+        localExecutor,
+        { profileData, sourceType: dbConnection ? 'sql' : 'excel' }
       );
       
       setResult(dashboardResult);
@@ -130,13 +140,22 @@ const AutoDashboardGenerator: React.FC<AutoDashboardGeneratorProps> = ({
     setShowRefinementInput(null);
 
     try {
+      let profileData: any = undefined;
+      if (!dbConnection && localExecutor) {
+        try {
+          profileData = await buildSchemaProfile(schemaContext, localExecutor);
+        } catch {
+          profileData = undefined;
+        }
+      }
       const regeneratedWidget = await regenerateSingleWidget(
         widget,
         schemaContext,
         apiKey,
         dbConnection,
         customRefinement || refinementPrompt[widget.id],
-        localExecutor
+        localExecutor,
+        { profileData, sourceType: dbConnection ? 'sql' : 'excel' }
       );
 
       // Update the result with the regenerated widget

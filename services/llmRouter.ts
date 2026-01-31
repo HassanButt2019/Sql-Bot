@@ -1,5 +1,5 @@
 import { Message, DbConnection } from "../types";
-import { limitChartData } from "./excelDuckdbService";
+import { coerceNumericAxis, deriveCountSeries, fixExcelSql, limitChartData, normalizeChartType, wrapCountByQuery } from "./excelDuckdbService";
 import { ApiClient, defaultApiClient } from "./apiClient";
 import { buildDbConnectionInfo, PasswordStore } from "./dbConnectionInfo";
 
@@ -10,7 +10,7 @@ export async function queryModel(
   dbConnection: DbConnection | null,
   onChunk: (text: string) => void,
   localExecutor?: (sql: string) => Promise<any[]>,
-  deps: { apiClient?: ApiClient; passwordStore?: PasswordStore } = {}
+  deps: { apiClient?: ApiClient; passwordStore?: PasswordStore; sourceType?: 'excel' | 'sql'; profileData?: any } = {}
 ): Promise<Partial<Message>> {
   onChunk('Analyzing your query...');
   
@@ -34,7 +34,9 @@ export async function queryModel(
       prompt,
       schemaContext: schema,
       apiKey,
-      dbConnection: dbConnectionInfo
+      dbConnection: dbConnectionInfo,
+      sourceType: deps.sourceType,
+      profileData: deps.profileData
     });
     
     if (!result.success) {
@@ -50,9 +52,67 @@ export async function queryModel(
         if (chartData && chartData.length > 100) {
           chartData = chartData.slice(0, 100);
         }
+        chartData = coerceNumericAxis(chartData, result.data.chartConfig?.yAxis);
+        result.data.chartConfig = normalizeChartType(chartData, result.data.chartConfig);
         chartData = limitChartData(chartData, result.data.chartConfig);
       } catch (err: any) {
         sqlError = err.message || 'Failed to execute SQL locally.';
+        if (deps.sourceType === 'excel') {
+          try {
+            const fixedSql = fixExcelSql(result.data.sql, schema, result.data.chartConfig);
+            chartData = await localExecutor(fixedSql);
+            if (chartData && chartData.length > 100) {
+              chartData = chartData.slice(0, 100);
+            }
+            chartData = coerceNumericAxis(chartData, result.data.chartConfig?.yAxis);
+            result.data.chartConfig = normalizeChartType(chartData, result.data.chartConfig);
+            chartData = limitChartData(chartData, result.data.chartConfig);
+            sqlError = null;
+            result.data.sql = fixedSql;
+          } catch (fixErr: any) {
+            sqlError = fixErr.message || sqlError;
+          }
+        }
+      }
+    }
+
+    if (deps.sourceType === 'excel' && localExecutor && result.data.sql && result.data.chartConfig?.xAxis) {
+      const row = Array.isArray(chartData) && chartData.length > 0 ? chartData[0] : null;
+      const yAxis = result.data.chartConfig?.yAxis;
+      const hasYAxis = yAxis ? row && Object.prototype.hasOwnProperty.call(row, yAxis) : true;
+      if (!chartData || chartData.length === 0 || !hasYAxis) {
+        try {
+          const countSql = wrapCountByQuery(result.data.sql, result.data.chartConfig.xAxis);
+          const counted = await localExecutor(countSql);
+          if (counted && counted.length > 0) {
+            chartData = coerceNumericAxis(counted, 'value');
+            result.data.chartConfig = normalizeChartType(chartData, { ...result.data.chartConfig, yAxis: 'value', type: result.data.chartConfig.type || 'bar' });
+            chartData = limitChartData(chartData, result.data.chartConfig);
+            result.data.sql = countSql;
+            sqlError = null;
+          }
+        } catch {
+          // keep original error if any
+        }
+      }
+    }
+
+    if (deps.sourceType === 'excel' && chartData && chartData.length > 0 && result.data.chartConfig) {
+      const yAxis = result.data.chartConfig.yAxis;
+      const row = chartData[0];
+      const hasYAxis = yAxis ? Object.prototype.hasOwnProperty.call(row, yAxis) : false;
+      if (!hasYAxis) {
+        const derived = deriveCountSeries(chartData, result.data.chartConfig.xAxis);
+        if (derived.rows.length > 0) {
+        chartData = coerceNumericAxis(derived.rows, 'value');
+          result.data.chartConfig = normalizeChartType(chartData, {
+            ...result.data.chartConfig,
+            xAxis: derived.xAxis || result.data.chartConfig.xAxis,
+            yAxis: 'value',
+            type: result.data.chartConfig.type || 'bar'
+          });
+          sqlError = null;
+        }
       }
     }
 
