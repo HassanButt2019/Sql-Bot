@@ -13,10 +13,7 @@ build/
 
 # Environmental variables
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
 
 # Debug
 npm-debug.log*
@@ -26,3 +23,9 @@ yarn-error.log*
 # System Files
 .DS_Store
 Thumbs.db
+
+# Semantic layer runtime store
+server/llm/semanticProfiles.json
+
+# Local SQLite data
+server/data/

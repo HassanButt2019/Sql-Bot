@@ -30,9 +30,20 @@ npm install
 ```
 
 ### 3. Environment Configuration
-Create a `.env` file in the root directory:
-```env
-API_KEY=your_gemini_api_key_here
+Use separate env files per environment and keep real secrets in `.env.*.local` (never committed).
+
+Recommended structure:
+```
+.env.example
+.env.development
+.env.development.local
+.env.production
+.env.production.local
+```
+
+Copy the template:
+```bash
+cp .env.example .env.development
 ```
 
 ### 4. Start the Application
@@ -45,3 +56,21 @@ This application utilizes local database introspection. Database credentials and
 
 ## 📄 License
 MIT
+
+
+
+
+Missing (launch‑critical, Day‑0)
+
+User accounts + profiles (no auth/login/user store)
+Payments / plans / subscription handling (no Stripe or billing)
+Usage limits / quotas per user/plan
+Audit logs of queries/actions
+Basic analytics (usage, failures)
+Admin controls for plan limits
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX_AUTH=20
+RATE_LIMIT_MAX_GENERAL=120
+LLM_RATE_LIMIT_WINDOW_MS=60000
+LLM_RATE_LIMIT_MAX=30
+JSON_BODY_LIMIT=1mb

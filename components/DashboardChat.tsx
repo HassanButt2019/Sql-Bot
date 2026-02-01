@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { DashboardItem, DbConnection } from '../types';
 import { queryDashboardChat, DashboardChatWidget } from '../services/dashboardChatService';
+import { buildSchemaProfile } from '../services/schemaProfile';
 import { MessageSquareIcon, SendIcon, XIcon, AlertCircleIcon, CheckCircleIcon } from 'lucide-react';
 
 interface ChatMessage {
@@ -81,13 +82,22 @@ const DashboardChat: React.FC<DashboardChatProps> = ({
     setMessages(prev => [...prev, userMessage]);
 
     try {
+      let profileData: any = undefined;
+      if (!dbConnection && localExecutor) {
+        try {
+          profileData = await buildSchemaProfile(schemaContext, localExecutor);
+        } catch {
+          profileData = undefined;
+        }
+      }
       const result = await queryDashboardChat(
         prompt,
         schemaContext,
         apiKey,
         dbConnection,
         dashboardItems,
-        localExecutor
+        localExecutor,
+        { profileData, sourceType: dbConnection ? 'sql' : 'excel' }
       );
 
       const itemsToAdd = convertWidgetsToItems(result.widgets);

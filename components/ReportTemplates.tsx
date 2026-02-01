@@ -226,7 +226,7 @@ export const TemplatePreview: React.FC<TemplatePreviewProps> = ({ template, item
             <div className="grid grid-cols-3 gap-2 mt-3">
               <div className="h-16 bg-blue-100 rounded"></div>
               <div className="h-16 bg-green-100 rounded"></div>
-              <div className="h-16 bg-purple-100 rounded"></div>
+              <div className="h-16 bg-blue-100 rounded"></div>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-2">
               <div className="h-20 bg-gradient-to-br from-blue-100 to-blue-50 rounded"></div>
@@ -240,7 +240,7 @@ export const TemplatePreview: React.FC<TemplatePreviewProps> = ({ template, item
             <div className="h-5 bg-slate-200 rounded w-2/3"></div>
             <div className="h-2 bg-slate-100 rounded w-full"></div>
             <div className="h-2 bg-slate-100 rounded w-4/5"></div>
-            <div className="h-16 bg-gradient-to-br from-blue-100 to-purple-100 rounded mt-2"></div>
+            <div className="h-16 bg-gradient-to-br from-blue-100 to-blue-200 rounded mt-2"></div>
             <div className="grid grid-cols-4 gap-1 mt-2">
               {[...Array(4)].map((_, i) => (
                 <div key={i} className="h-3 bg-slate-100 rounded"></div>
@@ -257,7 +257,7 @@ export const TemplatePreview: React.FC<TemplatePreviewProps> = ({ template, item
         return (
           <div className="grid grid-cols-2 gap-2">
             {[...Array(Math.min(itemCount, 4))].map((_, i) => (
-              <div key={i} className="h-14 bg-gradient-to-br from-blue-100 to-purple-100 rounded"></div>
+              <div key={i} className="h-14 bg-gradient-to-br from-blue-100 to-blue-200 rounded"></div>
             ))}
           </div>
         );
@@ -265,7 +265,7 @@ export const TemplatePreview: React.FC<TemplatePreviewProps> = ({ template, item
         return (
           <div className="space-y-2">
             <div className="h-4 bg-slate-200 rounded w-1/2 mx-auto"></div>
-            <div className="h-24 bg-gradient-to-br from-blue-100 to-purple-100 rounded"></div>
+            <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-200 rounded"></div>
           </div>
         );
       default:

@@ -1,20 +1,15 @@
-import { DbConnection, DashboardItem } from '../types';
-import { limitChartData } from './excelDuckdbService';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { ChartConfig, DbConnection, DashboardItem } from '../types';
+import { coerceNumericAxis, deriveCountSeries, fixExcelSql, limitChartData, normalizeChartType, wrapCountByQuery } from './excelDuckdbService';
+import { ApiClient, defaultApiClient } from './apiClient';
+import { buildDbConnectionInfo, PasswordStore } from './dbConnectionInfo';
+import { getCapabilityToken } from './capabilitiesService';
 
 export interface AutoDashboardWidget {
   id: string;
   title: string;
   sql: string;
   explanation: string;
-  chartConfig: {
-    type: 'bar' | 'line' | 'pie' | 'area' | 'radar' | 'scatter' | 'composed';
-    xAxis: string;
-    yAxis: string;
-    title: string;
-    colorScheme?: string;
-  };
+  chartConfig: ChartConfig;
   chartData: any[];
   sqlError?: string;
   addedAt: number;
@@ -154,7 +149,8 @@ export async function generateAutoDashboard(
   dbConnection: DbConnection | null,
   widgetCount: number = 15,
   onProgress?: (message: string) => void,
-  localExecutor?: (sql: string) => Promise<any[]>
+  localExecutor?: (sql: string) => Promise<any[]>,
+  deps: { apiClient?: ApiClient; passwordStore?: PasswordStore; sourceType?: 'excel' | 'sql'; profileData?: any } = {}
 ): Promise<AutoDashboardResult> {
   
   onProgress?.('🤖 AI is analyzing your request...');
@@ -168,35 +164,29 @@ export async function generateAutoDashboard(
   }
 
   // Prepare database connection info
-  const dbConnectionInfo = dbConnection ? {
-    host: dbConnection.host,
-    port: dbConnection.port,
-    username: dbConnection.username,
-    password: localStorage.getItem(`sqlmind_db_password_${dbConnection.id}`) || '',
-    database: dbConnection.database,
-    dialect: dbConnection.dialect,
-    connectionString: dbConnection.connectionString,
-    useConnectionString: dbConnection.useConnectionString
-  } : null;
+  const dbConnectionInfo = buildDbConnectionInfo(dbConnection, deps.passwordStore);
+  const apiClient = deps.apiClient ?? defaultApiClient;
+  const capabilityToken = await getCapabilityToken('dashboard.generate', {
+    apiClient,
+    connectorIds: dbConnection?.id ? [dbConnection.id] : []
+  });
 
   onProgress?.('📊 Generating dashboard structure...');
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/generate-dashboard`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const result = await apiClient.post<{ success: boolean; data: AutoDashboardResult; error?: string }>(
+      '/api/generate-dashboard',
+      {
         prompt,
         schemaContext,
         apiKey,
         dbConnection: dbConnectionInfo,
-        widgetCount
-      }),
-    });
-
-    const result = await response.json();
+        widgetCount,
+        sourceType: deps.sourceType,
+        profileData: deps.profileData
+      },
+      { headers: { 'x-capability-token': capabilityToken } }
+    );
     
     if (!result.success) {
       throw new Error(result.error || 'Failed to generate dashboard');
@@ -220,9 +210,64 @@ export async function generateAutoDashboard(
           if (chartData.length > 50) {
             chartData = chartData.slice(0, 50);
           }
-          chartData = limitChartData(chartData, widget.chartConfig);
+          chartData = coerceNumericAxis(chartData, widget.chartConfig?.yAxis);
+          const normalizedConfig = normalizeChartType(chartData, widget.chartConfig);
+          chartData = limitChartData(chartData, normalizedConfig);
+          if (deps.sourceType === 'excel') {
+            const row = chartData?.[0];
+            const yAxis = widget.chartConfig?.yAxis;
+            const hasYAxis = yAxis ? row && Object.prototype.hasOwnProperty.call(row, yAxis) : true;
+            if (!chartData || chartData.length === 0 || !hasYAxis) {
+              const countSql = wrapCountByQuery(widget.sql, widget.chartConfig?.xAxis);
+              const counted = await localExecutor(countSql);
+              if (counted && counted.length > 0) {
+                const nextChartData = limitChartData(coerceNumericAxis(counted, 'value'), normalizeChartType(counted, { ...widget.chartConfig, yAxis: 'value', type: widget.chartConfig?.type || 'bar' }));
+                return { ...widget, sql: countSql, chartData: nextChartData, chartConfig: normalizeChartType(nextChartData, { ...widget.chartConfig, yAxis: 'value', type: widget.chartConfig?.type || 'bar' }) };
+              }
+            }
+            if (chartData && chartData.length > 0 && !hasYAxis) {
+              const derived = deriveCountSeries(chartData, widget.chartConfig?.xAxis);
+              if (derived.rows.length > 0) {
+                const nextChartData = limitChartData(coerceNumericAxis(derived.rows, 'value'), normalizeChartType(derived.rows, { ...widget.chartConfig, yAxis: 'value' }));
+                return { ...widget, chartData: nextChartData, chartConfig: normalizeChartType(nextChartData, { ...widget.chartConfig, xAxis: derived.xAxis || widget.chartConfig?.xAxis, yAxis: 'value', type: widget.chartConfig?.type || 'bar' }) };
+              }
+            }
+          }
           return { ...widget, chartData };
         } catch (err: any) {
+          if (deps.sourceType === 'excel') {
+            try {
+              const fixedSql = fixExcelSql(widget.sql, schemaContext, widget.chartConfig);
+              let chartData = await localExecutor(fixedSql);
+              if (chartData.length > 50) {
+                chartData = chartData.slice(0, 50);
+              }
+              chartData = coerceNumericAxis(chartData, widget.chartConfig?.yAxis);
+              const normalizedConfig = normalizeChartType(chartData, widget.chartConfig);
+              chartData = limitChartData(chartData, normalizedConfig);
+              const row = chartData?.[0];
+              const yAxis = widget.chartConfig?.yAxis;
+              const hasYAxis = yAxis ? row && Object.prototype.hasOwnProperty.call(row, yAxis) : true;
+              if (!chartData || chartData.length === 0 || !hasYAxis) {
+                const countSql = wrapCountByQuery(fixedSql, widget.chartConfig?.xAxis);
+                const counted = await localExecutor(countSql);
+                if (counted && counted.length > 0) {
+                  const nextChartData = limitChartData(coerceNumericAxis(counted, 'value'), normalizeChartType(counted, { ...widget.chartConfig, yAxis: 'value', type: widget.chartConfig?.type || 'bar' }));
+                  return { ...widget, sql: countSql, chartData: nextChartData, chartConfig: normalizeChartType(nextChartData, { ...widget.chartConfig, yAxis: 'value', type: widget.chartConfig?.type || 'bar' }) };
+                }
+              }
+              if (chartData && chartData.length > 0 && !hasYAxis) {
+                const derived = deriveCountSeries(chartData, widget.chartConfig?.xAxis);
+                if (derived.rows.length > 0) {
+                  const nextChartData = limitChartData(coerceNumericAxis(derived.rows, 'value'), normalizeChartType(derived.rows, { ...widget.chartConfig, yAxis: 'value' }));
+                  return { ...widget, sql: fixedSql, chartData: nextChartData, chartConfig: normalizeChartType(nextChartData, { ...widget.chartConfig, xAxis: derived.xAxis || widget.chartConfig?.xAxis, yAxis: 'value', type: widget.chartConfig?.type || 'bar' }) };
+                }
+              }
+              return { ...widget, sql: fixedSql, chartData, sqlError: undefined };
+            } catch (fixErr: any) {
+              return { ...widget, chartData: [], sqlError: fixErr.message || err.message || 'Failed to execute SQL locally.' };
+            }
+          }
           return { ...widget, chartData: [], sqlError: err.message || 'Failed to execute SQL locally.' };
         }
       })
@@ -248,7 +293,8 @@ export async function regenerateSingleWidget(
   apiKey: string,
   dbConnection: DbConnection | null,
   refinementPrompt?: string,
-  localExecutor?: (sql: string) => Promise<any[]>
+  localExecutor?: (sql: string) => Promise<any[]>,
+  deps: { apiClient?: ApiClient; passwordStore?: PasswordStore; sourceType?: 'excel' | 'sql'; profileData?: any } = {}
 ): Promise<AutoDashboardWidget> {
   
   if (!dbConnection && !localExecutor) {
@@ -256,34 +302,28 @@ export async function regenerateSingleWidget(
   }
 
   // Prepare database connection info
-  const dbConnectionInfo = dbConnection ? {
-    host: dbConnection.host,
-    port: dbConnection.port,
-    username: dbConnection.username,
-    password: localStorage.getItem(`sqlmind_db_password_${dbConnection.id}`) || '',
-    database: dbConnection.database,
-    dialect: dbConnection.dialect,
-    connectionString: dbConnection.connectionString,
-    useConnectionString: dbConnection.useConnectionString
-  } : null;
+  const dbConnectionInfo = buildDbConnectionInfo(dbConnection, deps.passwordStore);
+  const apiClient = deps.apiClient ?? defaultApiClient;
+  const capabilityToken = await getCapabilityToken('dashboard.update', {
+    apiClient,
+    connectorIds: dbConnection?.id ? [dbConnection.id] : []
+  });
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/regenerate-widget`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const result = await apiClient.post<{ success: boolean; data: AutoDashboardWidget; error?: string }>(
+      '/api/regenerate-widget',
+      {
         widget: failedWidget,
         schemaContext,
         apiKey,
         dbConnection: dbConnectionInfo,
         refinementPrompt,
-        originalError: failedWidget.sqlError
-      }),
-    });
-
-    const result = await response.json();
+        originalError: failedWidget.sqlError,
+        sourceType: deps.sourceType,
+        profileData: deps.profileData
+      },
+      { headers: { 'x-capability-token': capabilityToken } }
+    );
     
     if (!result.success) {
       throw new Error(result.error || 'Failed to regenerate widget');
@@ -300,9 +340,64 @@ export async function regenerateSingleWidget(
       if (chartData.length > 50) {
         chartData = chartData.slice(0, 50);
       }
-      chartData = limitChartData(chartData, regenerated.chartConfig);
+      chartData = coerceNumericAxis(chartData, regenerated.chartConfig?.yAxis);
+      const normalizedConfig = normalizeChartType(chartData, regenerated.chartConfig);
+      chartData = limitChartData(chartData, normalizedConfig);
+      if (deps.sourceType === 'excel') {
+        const row = chartData?.[0];
+        const yAxis = regenerated.chartConfig?.yAxis;
+        const hasYAxis = yAxis ? row && Object.prototype.hasOwnProperty.call(row, yAxis) : true;
+        if (!chartData || chartData.length === 0 || !hasYAxis) {
+          const countSql = wrapCountByQuery(regenerated.sql, regenerated.chartConfig?.xAxis);
+          const counted = await localExecutor(countSql);
+          if (counted && counted.length > 0) {
+            const nextChartData = limitChartData(coerceNumericAxis(counted, 'value'), normalizeChartType(counted, { ...regenerated.chartConfig, yAxis: 'value', type: regenerated.chartConfig?.type || 'bar' }));
+            return { ...regenerated, sql: countSql, chartData: nextChartData, chartConfig: normalizeChartType(nextChartData, { ...regenerated.chartConfig, yAxis: 'value', type: regenerated.chartConfig?.type || 'bar' }) };
+          }
+        }
+        if (chartData && chartData.length > 0 && !hasYAxis) {
+          const derived = deriveCountSeries(chartData, regenerated.chartConfig?.xAxis);
+          if (derived.rows.length > 0) {
+            const nextChartData = limitChartData(coerceNumericAxis(derived.rows, 'value'), normalizeChartType(derived.rows, { ...regenerated.chartConfig, yAxis: 'value' }));
+            return { ...regenerated, chartData: nextChartData, chartConfig: normalizeChartType(nextChartData, { ...regenerated.chartConfig, xAxis: derived.xAxis || regenerated.chartConfig?.xAxis, yAxis: 'value', type: regenerated.chartConfig?.type || 'bar' }) };
+          }
+        }
+      }
       return { ...regenerated, chartData };
     } catch (err: any) {
+      if (deps.sourceType === 'excel') {
+        try {
+          const fixedSql = fixExcelSql(regenerated.sql, schemaContext, regenerated.chartConfig);
+          let chartData = await localExecutor(fixedSql);
+          if (chartData.length > 50) {
+            chartData = chartData.slice(0, 50);
+          }
+          chartData = coerceNumericAxis(chartData, regenerated.chartConfig?.yAxis);
+          const normalizedConfig = normalizeChartType(chartData, regenerated.chartConfig);
+          chartData = limitChartData(chartData, normalizedConfig);
+          const row = chartData?.[0];
+          const yAxis = regenerated.chartConfig?.yAxis;
+          const hasYAxis = yAxis ? row && Object.prototype.hasOwnProperty.call(row, yAxis) : true;
+          if (!chartData || chartData.length === 0 || !hasYAxis) {
+            const countSql = wrapCountByQuery(fixedSql, regenerated.chartConfig?.xAxis);
+            const counted = await localExecutor(countSql);
+            if (counted && counted.length > 0) {
+              const nextChartData = limitChartData(coerceNumericAxis(counted, 'value'), normalizeChartType(counted, { ...regenerated.chartConfig, yAxis: 'value', type: regenerated.chartConfig?.type || 'bar' }));
+              return { ...regenerated, sql: countSql, chartData: nextChartData, chartConfig: normalizeChartType(nextChartData, { ...regenerated.chartConfig, yAxis: 'value', type: regenerated.chartConfig?.type || 'bar' }) };
+            }
+          }
+          if (chartData && chartData.length > 0 && !hasYAxis) {
+            const derived = deriveCountSeries(chartData, regenerated.chartConfig?.xAxis);
+            if (derived.rows.length > 0) {
+              const nextChartData = limitChartData(coerceNumericAxis(derived.rows, 'value'), normalizeChartType(derived.rows, { ...regenerated.chartConfig, yAxis: 'value' }));
+              return { ...regenerated, sql: fixedSql, chartData: nextChartData, chartConfig: normalizeChartType(nextChartData, { ...regenerated.chartConfig, xAxis: derived.xAxis || regenerated.chartConfig?.xAxis, yAxis: 'value', type: regenerated.chartConfig?.type || 'bar' }) };
+            }
+          }
+          return { ...regenerated, sql: fixedSql, chartData, sqlError: undefined };
+        } catch (fixErr: any) {
+          return { ...regenerated, chartData: [], sqlError: fixErr.message || err.message || 'Failed to execute SQL locally.' };
+        }
+      }
       return { ...regenerated, chartData: [], sqlError: err.message || 'Failed to execute SQL locally.' };
     }
     

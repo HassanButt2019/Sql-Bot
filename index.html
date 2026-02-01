@@ -33,6 +33,43 @@
       background: #cbd5e1;
     }
 
+    /* Unified button styling */
+    button {
+      font-family: inherit;
+      font-weight: 700;
+      border-radius: 0.9rem;
+      transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
+    }
+    button:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, 0.35);
+      outline-offset: 2px;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    /* Force black primary buttons across the app */
+    button.bg-blue-600,
+    button.bg-blue-500,
+    button.bg-blue-700 {
+      background-color: #0f172a !important;
+      color: #ffffff !important;
+    }
+    button.bg-blue-600:hover,
+    button.bg-blue-500:hover,
+    button.bg-blue-700:hover {
+      background-color: #000000 !important;
+    }
+    button[class*="bg-gradient-to-r"] {
+      background-image: none !important;
+      background-color: #0f172a !important;
+      color: #ffffff !important;
+    }
+    button[class*="bg-gradient-to-r"]:hover {
+      background-color: #000000 !important;
+    }
+
     /* Print Styles for PDF Export */
     @media print {
       /* Reset ALL parent containers to allow natural document flow */

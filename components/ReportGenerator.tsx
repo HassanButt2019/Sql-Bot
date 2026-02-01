@@ -438,7 +438,7 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ isOpen, onClose, dash
 
               {/* PDF Export Options */}
               {exportFormat === 'pdf' && (
-                <div className="space-y-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-100">
+                <div className="space-y-4 p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl border border-blue-100">
                   <div className="flex items-center gap-2 mb-2">
                     <FileTextIcon className="w-4 h-4 text-blue-600" />
                     <span className="text-[10px] font-black uppercase tracking-widest text-blue-600">
@@ -501,7 +501,7 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ isOpen, onClose, dash
                 <div className="grid grid-cols-3 gap-2">
                   {items.slice(0, 3).map((item, i) => (
                     <div key={i} className="bg-white p-2 rounded-lg border border-slate-200">
-                      <div className="h-12 bg-gradient-to-br from-blue-100 to-purple-100 rounded mb-1"></div>
+                      <div className="h-12 bg-gradient-to-br from-blue-100 to-blue-200 rounded mb-1"></div>
                       <p className="text-[10px] font-bold text-slate-600 truncate">{item.title}</p>
                     </div>
                   ))}
